@@ -1,0 +1,1444 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phase Pulses</title>
+<style>
+  :root {
+    --bg: #0e1013;
+    --panel: #171a1f;
+    --panel-2: #1e2228;
+    --line: #2a2f37;
+    --text: #e6e8eb;
+    --muted: #8b939e;
+    --accent: #f2b45a;
+    --accent-2: #6fc3df;
+    --danger: #e0716b;
+    --radius: 10px;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body {
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 16px;
+    max-width: 1280px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 20px; margin: 0; letter-spacing: 0.02em; font-weight: 650; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  .mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px;
+    margin-bottom: 14px;
+  }
+  .transport { display: flex; gap: 8px; align-items: center; }
+  button {
+    font: inherit; color: var(--text); background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; cursor: pointer;
+  }
+  button:hover { border-color: #3b424d; background: #242931; }
+  button.primary { background: var(--accent); color: #1a1406; border-color: var(--accent); font-weight: 650; min-width: 86px; }
+  button.primary:hover { filter: brightness(1.06); }
+  .readout { display: flex; gap: 18px; flex-wrap: wrap; }
+  .readout div { display: flex; flex-direction: column; }
+  .readout .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+  .readout .val { font-size: 18px; }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+  .viz-main { padding: 0; overflow: hidden; position: relative; }
+  .fs-btn {
+    position: absolute; top: 2px; right: 4px; padding: 2px 5px; line-height: 0;
+    background: rgba(30,34,40,0.8); border-color: transparent; color: var(--muted);
+  }
+  .fs-btn:hover { color: var(--text); }
+  .fs-bar { display: none; align-items: center; gap: 16px; padding: 10px 16px; }
+  .fs-bar .readout .val { font-size: 16px; }
+  .fs-progress { flex: 1; height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; min-width: 60px; }
+  .fs-progress > div { height: 100%; width: 0; background: var(--accent); }
+  .viz-main.fs {
+    position: fixed; inset: 0; z-index: 10; border: 0; border-radius: 0;
+    background: var(--bg); display: flex; flex-direction: column;
+  }
+  .viz-main.fs .fs-bar { display: flex; }
+  .viz-main.fs #lanes { flex: 1; height: auto !important; min-height: 0; }
+  .viz-main.fs .fs-btn { top: auto; bottom: 8px; right: 8px; }
+  #lanes { display: block; width: 100%; height: 300px; }
+  .viz-row { display: grid; grid-template-columns: 1fr 200px; gap: 12px; margin-top: 12px; }
+  #overview { display: block; width: 100%; height: 140px; cursor: pointer; }
+  #dial { display: block; width: 100%; height: 140px; }
+  .viz-caption { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; gap: 8px; }
+
+  .settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 12px; }
+  .field { display: grid; grid-template-columns: 112px 1fr; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .field > label { color: var(--muted); font-size: 13px; }
+  .field.hidden { display: none; }
+  input, select {
+    font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 6px; padding: 5px 7px; width: 100%; min-width: 0;
+  }
+  input[type=range] { padding: 0; accent-color: var(--accent); }
+  input[type=checkbox] { width: auto; accent-color: var(--accent); }
+  input:focus, select:focus { outline: 2px solid #3d6f80; outline-offset: 0; }
+  .inline { display: flex; gap: 6px; align-items: center; }
+  .note { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { padding: 5px 8px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; }
+  td select { width: auto; padding: 3px 5px; }
+  .num { text-align: right; }
+  .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 50%; vertical-align: -1px; margin-right: 6px; cursor: pointer; }
+  .toggle { padding: 2px 8px; font-size: 12px; border-radius: 5px; }
+  .toggle.on-m { background: var(--danger); border-color: var(--danger); color: #1b0b0a; }
+  .toggle.on-s { background: var(--accent-2); border-color: var(--accent-2); color: #08171d; }
+  tr.overridden select { border-color: var(--accent); }
+  .steps { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 10px; }
+  .step {
+    width: 26px; height: 26px; padding: 0; border-radius: 5px; font-size: 10px; color: var(--muted);
+  }
+  .step.on { background: #8a6a3a; border-color: #8a6a3a; color: #f6ead6; }
+  .step.acc { background: var(--accent); border-color: #ffd89a; color: #1a1406; font-weight: 700; box-shadow: 0 0 0 1px #ffd89a inset; }
+  .parts-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .parts-head h2 { margin: 0; }
+
+  @media (max-width: 680px) {
+    .viz-row { grid-template-columns: 1fr; }
+    #dial { height: 200px; }
+    .readout .val { font-size: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Phase Pulses</h1>
+  <div class="transport">
+    <button id="play" class="primary" title="Space">Play</button>
+    <button id="reset" title="Home">Reset</button>
+  </div>
+  <div class="readout mono">
+    <div><span class="label">Position</span><span class="val" id="r-pos">0:00 / 10:00</span></div>
+    <div><span class="label" id="r-next-label">Next sync</span><span class="val" id="r-next">10:00</span></div>
+    <div id="r-full-wrap" hidden><span class="label" id="r-full-label">Full sync in</span><span class="val" id="r-full"></span></div>
+    <div><span class="label">Cycle</span><span class="val" id="r-cycle">1</span></div>
+  </div>
+</header>
+
+<div class="card viz-main" id="main-viz">
+  <div class="fs-bar">
+    <button id="fs-play" class="primary">Play</button>
+    <div class="readout mono">
+      <div><span class="label">Position</span><span class="val" id="fs-pos"></span></div>
+      <div><span class="label" id="fs-next-label">Next sync</span><span class="val" id="fs-next"></span></div>
+    </div>
+    <div class="fs-progress"><div id="fs-prog"></div></div>
+  </div>
+  <canvas id="lanes"></canvas>
+  <button id="fs" class="fs-btn" type="button" title="Full screen (F)">
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M1 5V1h4M9 1h4v4M13 9v4H9M5 13H1V9"/></svg>
+  </button>
+</div>
+
+<div class="viz-row">
+  <div class="card">
+    <div class="viz-caption">
+      <h2 style="margin:0">Whole process</h2>
+      <span class="small muted">Alignment over time · click to jump</span>
+    </div>
+    <canvas id="overview"></canvas>
+  </div>
+  <div class="card">
+    <div class="viz-caption"><h2 style="margin:0">Phase vs. part 1</h2></div>
+    <canvas id="dial"></canvas>
+  </div>
+</div>
+
+<div class="settings">
+  <section class="card">
+    <h2>Timing</h2>
+    <div class="field"><label for="bpm">Slowest BPM</label><input id="bpm" type="number" min="1" max="600" step="any"></div>
+    <div class="field"><label for="minutes">Length (minutes)</label><input id="minutes" type="number" min="0.1" step="any"></div>
+    <div class="field"><label for="lenMode">Length is</label>
+      <select id="lenMode">
+        <option value="pulse">Pulse realignment</option>
+        <option value="full">Whole process</option>
+      </select>
+    </div>
+    <div class="field"><label for="N">Base beats (n)</label><input id="N" type="number" min="1" step="1"></div>
+    <div class="field"><label for="stopAtEnd">At the end</label>
+      <select id="stopAtEnd">
+        <option value="0">Loop forever</option>
+        <option value="1">Stop at the full sync</option>
+      </select>
+    </div>
+    <div class="note" id="timing-summary"></div>
+  </section>
+
+  <section class="card">
+    <h2>Phase pattern</h2>
+    <div class="field"><label for="parts">Parts</label><input id="parts" type="number" min="1" max="48" step="1"></div>
+    <div class="field"><label for="pattern">Pattern</label>
+      <select id="pattern">
+        <option value="linear">Linear: n, n+1, n+2…</option>
+        <option value="squares">Squares: n+1, n+4, n+9…</option>
+        <option value="triangular">Triangular: n+1, n+3, n+6…</option>
+        <option value="fibonacci">Fibonacci: n+1, n+2, n+3, n+5…</option>
+        <option value="primes">Primes: n+2, n+3, n+5, n+7…</option>
+        <option value="powers">Powers of 2: n+1, n+2, n+4…</option>
+        <option value="odd">Odd: n+1, n+3, n+5…</option>
+        <option value="random">Random distinct offsets</option>
+        <option value="custom">Custom list…</option>
+      </select>
+    </div>
+    <div class="field" id="f-mult"><label for="mult">Multiplier</label><input id="mult" type="number" min="1" step="1"></div>
+    <div class="field" id="f-rand"><label for="randRange">Max offset</label>
+      <div class="inline"><input id="randRange" type="number" min="1" step="1"><button id="reroll" type="button">Reroll</button></div>
+    </div>
+    <div class="field" id="f-custom"><label for="customText">Offsets</label><input id="customText" type="text" placeholder="0 1 3 7 12"></div>
+    <div class="note" id="pattern-summary"></div>
+  </section>
+
+  <section class="card">
+    <h2>Rhythm (every part)</h2>
+    <div class="field"><label for="rLen">Steps</label>
+      <div class="inline">
+        <input id="rLen" type="number" min="1" max="32" step="1" style="width:64px;flex:none">
+        <select id="rPreset"></select>
+      </div>
+    </div>
+    <div class="steps" id="steps"></div>
+    <div class="field"><label for="accent">Accent boost</label><input id="accent" type="range" min="0" max="1" step="0.01"></div>
+    <div class="inline">
+      <button type="button" class="toggle" id="rotL" title="Rotate left">◀ Rotate</button>
+      <button type="button" class="toggle" id="rotR" title="Rotate right">Rotate ▶</button>
+      <button type="button" class="toggle" id="rInv">Invert</button>
+    </div>
+    <div class="note" id="rhythm-summary"></div>
+  </section>
+
+  <section class="card">
+    <h2>Fades (every part)</h2>
+    <div class="field"><label for="fadeOn">Fades</label>
+      <select id="fadeOn"><option value="0">Off</option><option value="1">On</option></select>
+    </div>
+    <div class="field"><label for="fadeBeats">Whole fade (beats)</label><input id="fadeBeats" type="number" min="2" max="4096" step="1"></div>
+    <div class="field"><label for="fadeShape">Shape</label>
+      <select id="fadeShape">
+        <option value="sine">Swell (sine)</option>
+        <option value="tri">Triangle</option>
+        <option value="down">Ramp down</option>
+        <option value="up">Ramp up</option>
+      </select>
+    </div>
+    <div class="field"><label for="fadeStart">Start</label>
+      <select id="fadeStart"><option value="loud">Loud</option><option value="quiet">Quiet</option></select>
+    </div>
+    <div class="field"><label for="fadeDepth">Depth</label><input id="fadeDepth" type="range" min="0" max="1" step="0.01"></div>
+    <div class="note" id="fade-summary"></div>
+  </section>
+
+  <section class="card">
+    <h2>Note changes (every part)</h2>
+    <div class="field"><label for="shiftOn">Note changes</label>
+      <select id="shiftOn"><option value="0">Off</option><option value="1">On</option></select>
+    </div>
+    <div class="field"><label for="shiftBeats">Each step (beats)</label><input id="shiftBeats" type="number" min="1" max="4096" step="1"></div>
+    <div class="field"><label for="shiftSeq">Transpose by</label><input id="shiftSeq" type="text" placeholder="0 1 -1"></div>
+    <div class="field"><label for="shiftUnit">Measured in</label>
+      <select id="shiftUnit"><option value="scale">Scale steps</option><option value="semi">Semitones</option></select>
+    </div>
+    <div class="note" id="shift-summary"></div>
+  </section>
+
+  <section class="card">
+    <h2>Pitch</h2>
+    <div class="field"><label for="key">Key</label>
+      <div class="inline">
+        <select id="key"></select>
+        <select id="octave" title="Octave"></select>
+      </div>
+    </div>
+    <div class="field"><label for="scale">Scale</label>
+      <select id="scale"></select>
+    </div>
+    <div class="field" id="f-cscale"><label for="customScale">Semitones</label><input id="customScale" type="text" placeholder="0 2 5 7 9"></div>
+    <div class="field"><label for="startDeg">Start degree</label><select id="startDeg"></select></div>
+    <div class="field"><label for="degStep">Step</label>
+      <select id="degStep">
+        <option value="1">Every degree</option>
+        <option value="2">Every other (thirds)</option>
+        <option value="3">Every third</option>
+        <option value="4">Every fourth</option>
+      </select>
+    </div>
+    <div class="field"><label for="order">Order</label>
+      <select id="order">
+        <option value="asc">Ascending (slowest = lowest)</option>
+        <option value="desc">Descending (slowest = highest)</option>
+        <option value="zigzag">Zig-zag (low, high, low…)</option>
+        <option value="shuffle">Shuffled</option>
+      </select>
+    </div>
+    <div class="field"><label for="tuning">Tuning</label>
+      <select id="tuning">
+        <option value="equal">Equal temperament</option>
+        <option value="just">Just intonation (5-limit)</option>
+        <option value="pyth">Pythagorean</option>
+        <option value="meantone">Quarter-comma meantone</option>
+      </select>
+    </div>
+    <div class="field"><label for="a4">A4 (Hz)</label><input id="a4" type="number" min="380" max="480" step="0.1"></div>
+    <div class="note">Non-equal tunings are built on the key's root.</div>
+  </section>
+
+  <section class="card">
+    <h2>Sound</h2>
+    <div class="field"><label for="preset">Instrument</label>
+      <select id="preset"></select>
+    </div>
+    <div class="field"><label for="decay">Decay</label><input id="decay" type="range" min="0.05" max="4" step="0.01"></div>
+    <div class="field"><label for="bright">Brightness</label><input id="bright" type="range" min="0" max="1" step="0.01"></div>
+    <div class="field"><label for="mallet">Mallet hardness</label><input id="mallet" type="range" min="0" max="1" step="0.01"></div>
+    <div class="field"><label for="reverb">Reverb</label><input id="reverb" type="range" min="0" max="1" step="0.01"></div>
+    <div class="field"><label for="spread">Stereo spread</label><input id="spread" type="range" min="0" max="1" step="0.01"></div>
+    <div class="field"><label for="volume">Volume</label><input id="volume" type="range" min="0" max="1" step="0.01"></div>
+  </section>
+
+  <section class="card">
+    <h2>View</h2>
+    <div class="field"><label for="viewSecs">Window (sec)</label><input id="viewSecs" type="range" min="2" max="40" step="0.5"></div>
+    <div class="field"><label for="gridMax">Graph detail</label>
+      <select id="gridMax"></select>
+    </div>
+    <div class="field"><label for="flip">Direction</label>
+      <select id="flip">
+        <option value="0">Scroll left → right</option>
+        <option value="1">Scroll right → left</option>
+      </select>
+    </div>
+    <div class="note">Space plays / pauses. Home resets. F toggles full screen. Click a colour dot in the parts table to audition that note.</div>
+  </section>
+</div>
+
+<section class="card" style="margin-top:12px">
+  <div class="parts-head">
+    <h2>Parts</h2>
+    <div class="inline">
+      <button id="clearOverrides" type="button" class="toggle">Reset notes to scale</button>
+      <button id="clearMutes" type="button" class="toggle">Clear mute / solo</button>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Part</th><th class="num">Offset</th><th class="num">Beats / cycle</th><th class="num">BPM</th><th>Note</th><th></th></tr></thead>
+      <tbody id="parts-body"></tbody>
+    </table>
+  </div>
+</section>
+
+<script>
+(() => {
+'use strict';
+
+// ---------- Constants ----------
+const NOTE_NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
+const SCALES = {
+  major:      { label: 'Major (Ionian)', iv: [0, 2, 4, 5, 7, 9, 11] },
+  minor:      { label: 'Natural minor', iv: [0, 2, 3, 5, 7, 8, 10] },
+  dorian:     { label: 'Dorian', iv: [0, 2, 3, 5, 7, 9, 10] },
+  phrygian:   { label: 'Phrygian', iv: [0, 1, 3, 5, 7, 8, 10] },
+  lydian:     { label: 'Lydian', iv: [0, 2, 4, 6, 7, 9, 11] },
+  mixolydian: { label: 'Mixolydian', iv: [0, 2, 4, 5, 7, 9, 10] },
+  harmminor:  { label: 'Harmonic minor', iv: [0, 2, 3, 5, 7, 8, 11] },
+  pentMajor:  { label: 'Pentatonic major', iv: [0, 2, 4, 7, 9] },
+  pentMinor:  { label: 'Pentatonic minor', iv: [0, 3, 5, 7, 10] },
+  wholetone:  { label: 'Whole tone', iv: [0, 2, 4, 6, 8, 10] },
+  chromatic:  { label: 'Chromatic', iv: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] },
+  unison:     { label: 'Unison (one pitch)', iv: [0] },
+  custom:     { label: 'Custom…', iv: null },
+};
+// partials: [frequency ratio, amplitude, decay multiplier]
+const PRESETS = {
+  marimba: { label: 'Marimba', decay: 0.9, bright: 0.5, mallet: 0.45,
+    partials: [[1, 1, 1], [3.93, 0.28, 0.22], [9.2, 0.09, 0.08]] },
+  damped: { label: 'Damped marimba', decay: 0.32, bright: 0.4, mallet: 0.6,
+    partials: [[1, 1, 1], [3.93, 0.3, 0.3], [9.2, 0.1, 0.12]] },
+  vibes: { label: 'Vibraphone', decay: 2.6, bright: 0.35, mallet: 0.22,
+    partials: [[1, 1, 1], [4, 0.18, 0.45], [10, 0.05, 0.15]] },
+  bells: { label: 'Glockenspiel', decay: 1.6, bright: 0.55, mallet: 0.3,
+    partials: [[1, 1, 1], [2.76, 0.35, 0.55], [5.4, 0.18, 0.3], [8.93, 0.08, 0.18]] },
+  wood: { label: 'Wood block', decay: 0.1, bright: 0.6, mallet: 0.8,
+    partials: [[1, 1, 1], [2.32, 0.45, 0.6], [4.25, 0.25, 0.35]] },
+};
+const LOOKAHEAD = 0.2;   // seconds of audio scheduled ahead
+const TICK_MS = 25;
+
+// ---------- State ----------
+const DEFAULTS = {
+  bpm: 60, minutes: 10, N: 600,
+  parts: 8, pattern: 'linear', mult: 1, customText: '0 1 3 7 12 20', randRange: 24, randSeed: 1,
+  key: 0, octave: 3, scale: 'major', customScale: '0 2 5 7 9', startDeg: 1, degStep: 1, order: 'asc',
+  preset: 'marimba', decay: 0.9, bright: 0.5, mallet: 0.45, reverb: 0.25, spread: 0.6, volume: 0.75,
+  viewSecs: 8, flip: 0, stopAtEnd: 0, gridMax: 4,
+  rhythm: [1], lenMode: 'pulse', accent: 0.5,
+  shiftOn: 0, shiftBeats: 20, shiftSeq: '0 1 -1', shiftUnit: 'scale',
+  fadeOn: 0, fadeBeats: 64, fadeShape: 'sine', fadeStart: 'loud', fadeDepth: 1,
+  tuning: 'equal', a4: 440,
+  overrides: {}, mute: {}, solo: {},
+};
+const STORE_KEY = 'phase-pulses-v1';
+const S = structuredClone(DEFAULTS);
+try {
+  const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
+  if (saved && typeof saved === 'object') {
+    for (const k of Object.keys(DEFAULTS)) if (k in saved && typeof saved[k] === typeof DEFAULTS[k]) S[k] = saved[k];
+  }
+} catch (e) { /* storage unavailable */ }
+if (!Array.isArray(S.rhythm) || !S.rhythm.length) S.rhythm = [1];
+S.rhythm = S.rhythm.slice(0, 32).map(v => Math.min(2, Math.max(0, Math.round(+v) || 0)));   // 0 off, 1 on, 2 accent
+let saveTimer = 0;
+function save() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) {} }, 300);
+}
+
+// Derived
+let T = 600;            // cycle length in seconds
+let offsets = [];       // per part offset from n
+let counts = [];        // per part beats per cycle
+let notes = [];         // per part MIDI note
+let alignment = { pulse: null, deep: null, version: 0 };
+let period = 1;         // shortest repeat of the on/off rhythm
+let spanCycles = 1;     // pulse cycles until the rhythm (and fades) realign too
+let cyclePeriod = 1;    // beats per repeat of rhythm and fade combined
+const RHYTHM_PRESETS = {
+  pulse:    { label: 'Steady pulse', r: [1] },
+  clapping: { label: 'Clapping Music (Reich)', r: [1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0] },
+  tresillo: { label: 'Tresillo', r: [1, 0, 0, 1, 0, 0, 1, 0] },
+  clave:    { label: 'Son clave', r: [1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 0] },
+  bembe:    { label: 'Bembé (12)', r: [1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1] },
+  threeFour:{ label: 'Three on, one off', r: [1, 1, 1, 0] },
+  accent4:  { label: 'Accent every 4', r: [2, 1, 1, 1] },
+  accent3:  { label: 'Accent every 3', r: [2, 1, 1] },
+  offbeat:  { label: 'Every other', r: [1, 0] },
+};
+
+// ---------- Helpers ----------
+const $ = id => document.getElementById(id);
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+// Interval sizes in cents above the key's root, for each pitch class.
+const TUNINGS = {
+  just: [1, 16 / 15, 9 / 8, 6 / 5, 5 / 4, 4 / 3, 45 / 32, 3 / 2, 8 / 5, 5 / 3, 9 / 5, 15 / 8].map(r => 1200 * Math.log2(r)),
+  pyth: [1, 256 / 243, 9 / 8, 32 / 27, 81 / 64, 4 / 3, 729 / 512, 3 / 2, 128 / 81, 27 / 16, 16 / 9, 243 / 128].map(r => 1200 * Math.log2(r)),
+  meantone: [0, 76.0, 193.2, 310.3, 386.3, 503.4, 579.5, 696.6, 772.6, 889.7, 1006.8, 1082.9],
+};
+// The root stays where equal temperament puts it; other notes are tuned relative to it.
+function mtof(m) {
+  const table = TUNINGS[S.tuning];
+  const pc = table ? ((m - S.key) % 12 + 12) % 12 : 0;
+  const cents = table ? table[pc] - pc * 100 : 0;
+  return S.a4 * Math.pow(2, (m - 69) / 12 + cents / 1200);
+}
+const noteName = m => NOTE_NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
+const mod = (a, b) => ((a % b) + b) % b;
+function fmtTime(s) {
+  s = Math.max(0, s);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
+  return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(sec).padStart(2, '0');
+}
+function mulberry32(a) {
+  return () => {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const PRIMES = (() => {
+  const out = [];
+  for (let n = 2; out.length < 64; n++) if (out.every(p => n % p)) out.push(n);
+  return out;
+})();
+function parseNums(text) {
+  return (text.match(/-?\d+(\.\d+)?/g) || []).map(Number);
+}
+function partHue(i, n) { return (200 + (n <= 1 ? 0 : i * 300 / n)) % 360; }
+function partColor(i, n, a = 1, l = 62) { return `hsla(${partHue(i, n)}, 78%, ${l}%, ${a})`; }
+
+// ---------- Derivations ----------
+function computeOffsets() {
+  const n = clamp(Math.round(S.parts), 1, 48);
+  const k = Math.max(1, Math.round(S.mult));
+  let offs;
+  switch (S.pattern) {
+    case 'squares':    offs = Array.from({ length: n }, (_, i) => i * i * k); break;
+    case 'triangular': offs = Array.from({ length: n }, (_, i) => i * (i + 1) / 2 * k); break;
+    case 'fibonacci': {
+      const f = [0, 1, 2];
+      while (f.length < n) f.push(f[f.length - 1] + f[f.length - 2]);
+      offs = f.slice(0, n).map(v => v * k); break;
+    }
+    case 'primes':     offs = Array.from({ length: n }, (_, i) => (i === 0 ? 0 : PRIMES[i - 1]) * k); break;
+    case 'powers':     offs = Array.from({ length: n }, (_, i) => (i === 0 ? 0 : 2 ** (i - 1)) * k); break;
+    case 'odd':        offs = Array.from({ length: n }, (_, i) => (i === 0 ? 0 : 2 * i - 1) * k); break;
+    case 'random': {
+      const range = Math.max(n - 1, Math.round(S.randRange));
+      const rnd = mulberry32(S.randSeed * 7919 + n);
+      const pool = Array.from({ length: range }, (_, i) => i + 1);
+      for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+      offs = [0, ...pool.slice(0, n - 1).sort((a, b) => a - b)]; break;
+    }
+    case 'custom': {
+      offs = parseNums(S.customText).map(Math.round).slice(0, 48);
+      if (!offs.length) offs = [0];
+      break;
+    }
+    default: offs = Array.from({ length: n }, (_, i) => i * k);
+  }
+  // every part needs at least one beat per cycle
+  return offs.map(o => Math.max(o, 1 - S.N));
+}
+
+// Fade level for beat k of a part (fades are measured in each part's own beats).
+function fadeGain(k) {
+  if (!S.fadeOn) return 1;
+  const F = Math.max(2, Math.round(S.fadeBeats));
+  const ph = mod(k, F) / F;
+  let env;
+  switch (S.fadeShape) {
+    case 'tri':  env = Math.abs(2 * ph - 1); break;
+    case 'down': env = 1 - ph; break;
+    case 'up':   env = ph; break;
+    default:     env = 0.5 + 0.5 * Math.cos(2 * Math.PI * ph);
+  }
+  if (S.fadeStart === 'quiet') env = 1 - env;
+  return 1 - S.fadeDepth * (1 - env * env);
+}
+// Note changes: every shiftBeats of a part's own beats, step through the transpose list.
+function shiftList() {
+  const seq = parseNums(S.shiftSeq).map(Math.round).slice(0, 32);
+  return seq.length ? seq : [0];
+}
+function shiftAt(k) {
+  if (!S.shiftOn) return 0;
+  const seq = shiftList();
+  return seq[mod(Math.floor(k / Math.max(1, Math.round(S.shiftBeats))), seq.length)];
+}
+// Beats per repeat of the note-change cycle (1 if it never changes anything).
+function shiftPeriod() {
+  if (!S.shiftOn) return 1;
+  const p = patternPeriod(shiftList());
+  return p === 1 ? 1 : p * Math.max(1, Math.round(S.shiftBeats));
+}
+// Move a note by `off` scale steps (or semitones). Notes outside the scale move by semitones.
+function transpose(m, off) {
+  if (!off) return m;
+  if (S.shiftUnit === 'semi') return clamp(m + off, 12, 120);
+  const iv = scaleIntervals(), len = iv.length;
+  const idx = iv.indexOf(mod(m - S.key, 12));
+  if (idx < 0) return clamp(m + off, 12, 120);
+  const d = Math.floor((m - S.key) / 12) * len + idx + off;
+  return clamp(S.key + 12 * Math.floor(d / len) + iv[mod(d, len)], 12, 120);
+}
+function stepGain(v) { return v === 2 ? 1 + S.accent * 1.5 : 1; }
+const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+const lcm = (a, b) => a / gcd(a, b) * b;
+
+// Shortest p such that the rhythm repeats every p steps.
+function patternPeriod(r) {
+  const L = r.length;
+  for (let p = 1; p < L; p++) if (L % p === 0 && r.every((v, i) => v === r[i % p])) return p;
+  return L;
+}
+// Parts only fully realign once each one has drifted a whole number of rhythm repeats
+// relative to part 1: the smallest c with c * offset ≡ 0 (mod period) for every part.
+function fullCycles(p, offs) {
+  let l = 1;
+  for (const o of offs) {
+    const need = p / gcd(p, mod(o - offs[0], p));
+    l = lcm(l, need);
+  }
+  return l;
+}
+
+function scaleIntervals() {
+  if (S.scale === 'custom') {
+    const iv = [...new Set(parseNums(S.customScale).map(v => mod(Math.round(v), 12)))].sort((a, b) => a - b);
+    return iv.length ? iv : [0];
+  }
+  return SCALES[S.scale].iv;
+}
+
+function computeNotes(n) {
+  const iv = scaleIntervals();
+  const root = 12 * (S.octave + 1) + S.key;
+  const start = clamp(S.startDeg - 1, 0, iv.length - 1);
+  // position of each part in the pitch ladder
+  let pos = Array.from({ length: n }, (_, i) => i);
+  if (S.order === 'desc') pos = pos.map(i => n - 1 - i);
+  else if (S.order === 'zigzag') pos = pos.map(i => (i % 2 === 0 ? i / 2 : n - 1 - (i - 1) / 2));
+  else if (S.order === 'shuffle') {
+    const rnd = mulberry32(S.randSeed * 104729 + n);
+    for (let i = n - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [pos[i], pos[j]] = [pos[j], pos[i]]; }
+  }
+  return pos.map((p, i) => {
+    if (S.overrides[i] != null) return S.overrides[i];
+    if (S.scale === 'unison') return root + iv[0];
+    const d = start + p * S.degStep;
+    return clamp(root + iv[d % iv.length] + 12 * Math.floor(d / iv.length), 12, 120);
+  });
+}
+
+// "Alignment": for each moment in the process, how strongly the parts line up.
+// Harmonic h measures parts landing on a common 1/h-beat grid. Two layers:
+//  - deep:  h = 1/period levels (same rhythm step / fade / note change) — slow structure
+//  - pulse: h = 1..gridMax (beats lining up) — fast; only kept when the process is short
+//           enough for it to be resolvable on screen
+function alignLayer(levels, M) {
+  const n = counts.length, out = new Float32Array(M + 1);
+  const base = 1 / Math.sqrt(n);
+  for (let s = 0; s <= M; s++) {
+    const t = s / M * spanCycles;   // in pulse cycles
+    let best = 0;
+    for (const [h, w] of levels) {
+      let re = 0, im = 0;
+      for (let i = 0; i < n; i++) {
+        // phase of part i relative to part 0, in beats (keeps numbers small)
+        const ph = 2 * Math.PI * h * t * (counts[i] - counts[0]);
+        re += Math.cos(ph); im += Math.sin(ph);
+      }
+      // subtract the random-phase baseline so noise doesn't look like structure
+      const v = clamp((Math.hypot(re, im) / n - base) / (1 - base), 0, 1) * w;
+      if (v > best) best = v;
+    }
+    out[s] = best;
+  }
+  return out;
+}
+function computeAlignment() {
+  const n = counts.length;
+  if (n < 2) return { pulse: new Float32Array([1, 1]), deep: null, version: Math.random() };
+  const maxDiff = Math.max(...counts) - Math.min(...counts);
+  const H = clamp(Math.round(S.gridMax), 1, 12);
+  const deepLevels = [];
+  if (cyclePeriod > 1) deepLevels.push([1 / cyclePeriod, 1]);
+  if (period > 1 && period !== cyclePeriod) deepLevels.push([1 / period, 0.85]);
+  const deep = deepLevels.length
+    ? alignLayer(deepLevels, clamp(Math.ceil(maxDiff * spanCycles / Math.min(period > 1 ? period : cyclePeriod, cyclePeriod) * 64), 600, 40000))
+    : null;
+  const pulseM = maxDiff * spanCycles * H * 6;
+  const pulseLevels = Array.from({ length: H }, (_, i) => [i + 1, (deep ? 0.7 : 1) / Math.sqrt(i + 1)]);
+  const pulse = !deep || pulseM <= 40000 ? alignLayer(pulseLevels, clamp(pulseM, 1200, 40000)) : null;
+  return { pulse, deep, version: Math.random() };
+}
+
+// ---------- Audio ----------
+let actx = null, master = null, wet = null, noiseBuf = null, comp = null;
+let session = null;           // { bus, nodes: [{g, pan}] }
+let playing = false, t0 = 0, pausedAt = 0, nextK = [];
+let stopCycle = 1;            // with stopAtEnd, playback ends at stopCycle * T
+let timer = null;
+
+function initAudio() {
+  if (actx) return;
+  actx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+  comp = actx.createDynamicsCompressor();
+  comp.threshold.value = -12; comp.knee.value = 8; comp.ratio.value = 10;
+  comp.attack.value = 0.002; comp.release.value = 0.25;
+  comp.connect(actx.destination);
+
+  master = actx.createGain();
+  master.gain.value = S.volume;
+  master.connect(comp);
+
+  const conv = actx.createConvolver();
+  conv.buffer = makeImpulse(2.8);
+  wet = actx.createGain();
+  wet.gain.value = S.reverb * 0.9;
+  master.connect(wet).connect(conv).connect(comp);
+
+  noiseBuf = actx.createBuffer(1, actx.sampleRate, actx.sampleRate);
+  const d = noiseBuf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+
+  startTimer();
+}
+
+function makeImpulse(seconds) {
+  const len = Math.floor(actx.sampleRate * seconds);
+  const buf = actx.createBuffer(2, len, actx.sampleRate);
+  for (let c = 0; c < 2; c++) {
+    const d = buf.getChannelData(c);
+    for (let i = 0; i < len; i++) {
+      const x = i / len;
+      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - x, 3) * (i < actx.sampleRate * 0.01 ? i / (actx.sampleRate * 0.01) : 1);
+    }
+  }
+  return buf;
+}
+
+// A Worker-based clock keeps scheduling alive when the tab is in the background.
+function startTimer() {
+  try {
+    const src = `let id;onmessage=e=>{clearInterval(id);if(e.data>0)id=setInterval(()=>postMessage(0),e.data)}`;
+    timer = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+    timer.onmessage = schedule;
+    timer.postMessage(TICK_MS);
+  } catch (e) {
+    timer = null;
+    setInterval(schedule, TICK_MS);
+  }
+}
+
+function playVoice(t, midi, dest, vel = 1) {
+  const f0 = mtof(midi);
+  const P = PRESETS[S.preset] || PRESETS.marimba;
+  const dec = clamp(S.decay * Math.pow(262 / f0, 0.45), 0.04, 8);
+  const out = actx.createGain();
+  out.gain.value = vel;
+  out.connect(dest);
+  const atk = 0.0015;
+  let last = null, end = 0;
+  for (const [ratio, amp, dm] of P.partials) {
+    const f = f0 * ratio;
+    if (f > 16000) continue;
+    const a = ratio === 1 ? amp : amp * S.bright * 2;
+    if (a < 0.003) continue;
+    const d = Math.max(0.025, dec * dm);
+    const o = actx.createOscillator();
+    o.frequency.value = f;
+    const g = actx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(a * 0.5, t + atk);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + atk + d);
+    o.connect(g).connect(out);
+    o.start(t);
+    o.stop(t + atk + d + 0.02);
+    if (t + d > end) { end = t + d; last = o; }
+  }
+  if (S.mallet > 0.01) {
+    const src = actx.createBufferSource();
+    src.buffer = noiseBuf;
+    const bp = actx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = clamp(f0 * (2 + S.mallet * 6), 400, 9000);
+    bp.Q.value = 0.9;
+    const g = actx.createGain();
+    const peak = S.mallet * S.mallet * 0.7;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(peak, t + 0.0008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.008 + (1 - S.mallet) * 0.02);
+    src.connect(bp).connect(g).connect(out);
+    src.start(t, Math.random() * 0.9, 0.05);
+  }
+  if (last) last.onended = () => out.disconnect();
+}
+
+function audible(i) {
+  const anySolo = Object.keys(S.solo).some(k => S.solo[k] && +k < counts.length);
+  return !S.mute[i] && (!anySolo || !!S.solo[i]);
+}
+function panFor(i) {
+  const n = counts.length;
+  return n < 2 ? 0 : (i / (n - 1) * 2 - 1) * S.spread;
+}
+
+function newSession() {
+  if (session) {
+    const old = session;
+    old.bus.gain.setTargetAtTime(0, actx.currentTime, 0.012);
+    setTimeout(() => old.bus.disconnect(), 400);
+  }
+  const bus = actx.createGain();
+  bus.gain.value = 1.1 / Math.sqrt(Math.max(1, counts.length));
+  bus.connect(master);
+  const nodes = counts.map((_, i) => {
+    const g = actx.createGain();
+    g.gain.value = audible(i) ? 1 : 0;
+    const pan = actx.createStereoPanner();
+    pan.pan.value = panFor(i);
+    g.connect(pan).connect(bus);
+    return { g, pan };
+  });
+  session = { bus, nodes };
+}
+
+function updateMix() {
+  if (!session) return;
+  session.nodes.forEach((nd, i) => {
+    nd.g.gain.setTargetAtTime(audible(i) ? 1 : 0, actx.currentTime, 0.01);
+    nd.pan.pan.setTargetAtTime(panFor(i), actx.currentTime, 0.02);
+  });
+}
+
+function schedule() {
+  if (!playing || !session) return;
+  const now = actx.currentTime;
+  const horizon = now + LOOKAHEAD;
+  const r = S.rhythm, L = r.length;
+  for (let i = 0; i < counts.length; i++) {
+    const dt = T / counts[i];
+    // Beat times are computed absolutely (k * dt) so no drift accumulates.
+    while (true) {
+      // the final sync beat (k = counts * stopCycle) is played, nothing after it
+      if (S.stopAtEnd && nextK[i] > counts[i] * stopCycle) break;
+      const t = t0 + nextK[i] * dt;
+      if (t > horizon) break;
+      const step = r[nextK[i] % L];
+      const vel = step ? stepGain(step) * fadeGain(nextK[i]) : 0;
+      if (t >= now - 0.005 && vel > 0.003) playVoice(Math.max(t, now), transpose(notes[i], shiftAt(nextK[i])), session.nodes[i].g, vel);
+      nextK[i]++;
+    }
+  }
+  if (S.stopAtEnd && now >= t0 + stopCycle * T + 0.05) finish();
+}
+
+// Reached the final sync: let the last notes ring out, then rewind to the start.
+function finish() {
+  playing = false;
+  const old = session;
+  session = null;
+  if (old) setTimeout(() => old.bus.disconnect(), 8000);
+  pausedAt = 0;
+  setPlayLabels();
+}
+
+function elapsed() {
+  return playing ? actx.currentTime - t0 : pausedAt;
+}
+function visualElapsed() {
+  if (!playing) return pausedAt;
+  return actx.currentTime - t0 - (actx.outputLatency || actx.baseLatency || 0);
+}
+
+function startPlayback() {
+  t0 = actx.currentTime + 0.05 - pausedAt;
+  nextK = counts.map(n => Math.ceil(pausedAt * n / T - 1e-9));
+  stopCycle = (Math.floor(pausedAt / (T * spanCycles) + 1e-9) + 1) * spanCycles;
+  newSession();
+  playing = true;
+}
+function play() {
+  initAudio();
+  actx.resume();
+  startPlayback();
+  setPlayLabels();
+}
+function setPlayLabels() {
+  for (const id of ['play', 'fs-play']) $(id).textContent = playing ? 'Pause' : 'Play';
+}
+function pause() {
+  if (!playing) return;
+  pausedAt = Math.max(0, elapsed());
+  playing = false;
+  if (session) { session.bus.gain.setTargetAtTime(0, actx.currentTime, 0.03); const old = session; setTimeout(() => old.bus.disconnect(), 500); session = null; }
+  setPlayLabels();
+}
+function seek(e) {
+  pausedAt = Math.max(0, e);
+  if (playing) startPlayback();
+}
+
+function audition(i) {
+  initAudio();
+  actx.resume();
+  const g = actx.createGain();
+  g.gain.value = 0.7;
+  const pan = actx.createStereoPanner();
+  pan.pan.value = panFor(i);
+  g.connect(pan).connect(master);
+  playVoice(actx.currentTime + 0.01, notes[i], g);
+  setTimeout(() => pan.disconnect(), 8000);
+}
+
+// ---------- Rebuild on changes ----------
+function rebuildStructure() {
+  const oldT = T, oldE = elapsed(), oldCounts = counts.join();
+  offsets = computeOffsets();
+  period = patternPeriod(S.rhythm);
+  // everything that repeats in each part's own beats: the rhythm and (if on) the fade
+  cyclePeriod = lcm(lcm(period, S.fadeOn ? Math.max(2, Math.round(S.fadeBeats)) : 1), shiftPeriod());
+  spanCycles = fullCycles(cyclePeriod, offsets);
+  if (S.lenMode === 'full') S.N = S.bpm * S.minutes / spanCycles;
+  S.N = Math.max(1, Math.round(S.N));
+  $('N').value = S.N;
+  T = S.N * 60 / S.bpm;
+  offsets = computeOffsets();
+  counts = offsets.map(o => S.N + o);
+  notes = computeNotes(counts.length);
+  alignment = computeAlignment();
+  renderTable();
+  renderSummaries();
+  renderRhythm();
+  renderShift();
+  // keep the same relative position in the cycle
+  const e = oldT > 0 ? oldE / oldT * T : 0;
+  if (playing && T === oldT && counts.join() === oldCounts) {
+    // timing untouched (e.g. only the rhythm's period changed): keep playing seamlessly
+    stopCycle = (Math.floor(Math.max(0, elapsed()) / (T * spanCycles)) + 1) * spanCycles;
+  } else if (playing) { pausedAt = Math.max(0, e); startPlayback(); }
+  else pausedAt = Math.max(0, e);
+  save();
+}
+function rebuildNotes() {
+  notes = computeNotes(counts.length);
+  renderTable();
+  save();
+}
+
+function renderSummaries() {
+  const bpms = counts.map(c => c * 60 / T);
+  $('timing-summary').innerHTML =
+    `Pulses realign every <b class="mono">${fmtTime(T)}</b>` +
+    (spanCycles > 1 ? `; counting rhythm, fades and note changes, the whole process takes <b class="mono">${fmtTime(T * spanCycles)}</b> (${spanCycles} cycles)` : '') +
+    `${Math.abs(T * (S.lenMode === 'full' ? spanCycles : 1) - S.minutes * 60) > 0.01 ? ' (rounded to whole beats)' : ''}. ` +
+    `Parts range <b class="mono">${Math.min(...bpms).toFixed(2)}</b> → <b class="mono">${Math.max(...bpms).toFixed(2)}</b> BPM.`;
+  const list = offsets.slice(0, 12).join(', ') + (offsets.length > 12 ? ', …' : '');
+  $('pattern-summary').innerHTML =
+    `Offsets ${list}. Parts play <span class="mono">${counts.slice(0, 6).join(', ')}${counts.length > 6 ? ', …' : ''}</span> beats against ${S.N}.`;
+}
+
+function renderRhythm() {
+  $('rLen').value = S.rhythm.length;
+  $('steps').innerHTML = S.rhythm.map((v, i) =>
+    `<button type="button" class="step ${['', 'on', 'acc'][v]}" data-step="${i}" title="Step ${i + 1}: click cycles off / on / accent">${i + 1}</button>`).join('');
+  const on = S.rhythm.filter(Boolean).length;
+  const acc = S.rhythm.filter(v => v === 2).length;
+  $('rhythm-summary').innerHTML = S.rhythm.length === 1
+    ? 'One step: every pulse plays. Click steps to cycle off / on / accent.'
+    : `${on} of ${S.rhythm.length} steps sound${acc ? `, ${acc} accented` : ''}` +
+      (period < S.rhythm.length ? ` (repeats every ${period})` : '') +
+      (spanCycles > 1 ? `. Full realignment takes ${spanCycles} pulse cycles (${fmtTime(T * spanCycles)}).`
+                      : '. Parts drift by whole rhythm repeats, so the length is unchanged.');
+  const F = Math.max(2, Math.round(S.fadeBeats));
+  $('fade-summary').innerHTML = !S.fadeOn
+    ? 'Each part swells and fades over a fixed number of its own beats, so the fades drift apart like the pulses.'
+    : `One fade lasts ${F} beats (${fmtTime(F * T / counts[0])} for part 1). After each pulse cycle, a part's fade has slipped by its offset in beats; ` +
+      `everything realigns after <b class="mono">${spanCycles}</b> cycles (${fmtTime(T * spanCycles)}).`;
+}
+function renderShift() {
+  const seq = shiftList(), M = Math.max(1, Math.round(S.shiftBeats));
+  const unit = S.shiftUnit === 'semi' ? 'semitones' : 'scale steps';
+  $('shift-summary').innerHTML = !S.shiftOn
+    ? 'Every so many of its own beats, each part moves to the next transposition in the list.'
+    : `Each part moves through ${seq.map(v => (v > 0 ? '+' : '') + v).join(', ')} ${unit}, changing every ${M} beats ` +
+      `(one round = ${M * seq.length} beats). Everything realigns after <b class="mono">${spanCycles}</b> cycles (${fmtTime(T * spanCycles)}).`;
+}
+function rhythmChanged() {
+  if (patternPeriod(S.rhythm) !== period) rebuildStructure();
+  renderRhythm();
+  save();
+}
+
+function noteOptions(sel) {
+  let html = '';
+  for (let m = 24; m <= 108; m++) html += `<option value="${m}"${m === sel ? ' selected' : ''}>${noteName(m)}</option>`;
+  return html;
+}
+function renderTable() {
+  const n = counts.length;
+  const rows = counts.map((c, i) => {
+    const ov = S.overrides[i] != null;
+    return `<tr class="${ov ? 'overridden' : ''}">
+      <td><span class="swatch" data-aud="${i}" style="background:${partColor(i, n)}" title="Audition"></span>${i + 1}</td>
+      <td class="num mono">${offsets[i] >= 0 ? '+' : ''}${offsets[i]}</td>
+      <td class="num mono">${c}</td>
+      <td class="num mono">${(c * 60 / T).toFixed(3)}</td>
+      <td><select data-note="${i}">${noteOptions(notes[i])}</select></td>
+      <td><button class="toggle ${S.mute[i] ? 'on-m' : ''}" data-mute="${i}" title="Mute">M</button>
+          <button class="toggle ${S.solo[i] ? 'on-s' : ''}" data-solo="${i}" title="Solo">S</button></td>
+    </tr>`;
+  });
+  $('parts-body').innerHTML = rows.join('');
+}
+
+$('parts-body').addEventListener('click', ev => {
+  const b = ev.target.closest('[data-mute],[data-solo],[data-aud]');
+  if (!b) return;
+  if (b.dataset.aud != null) { audition(+b.dataset.aud); return; }
+  const key = b.dataset.mute != null ? 'mute' : 'solo';
+  const i = +(b.dataset.mute ?? b.dataset.solo);
+  S[key][i] = !S[key][i];
+  if (!S[key][i]) delete S[key][i];
+  renderTable(); updateMix(); save();
+});
+$('parts-body').addEventListener('change', ev => {
+  const sel = ev.target.closest('[data-note]');
+  if (!sel) return;
+  const i = +sel.dataset.note;
+  S.overrides[i] = +sel.value;
+  notes[i] = +sel.value;
+  sel.closest('tr').classList.add('overridden');
+  audition(i);
+  save();
+});
+$('clearOverrides').onclick = () => { S.overrides = {}; rebuildNotes(); };
+$('clearMutes').onclick = () => { S.mute = {}; S.solo = {}; renderTable(); updateMix(); save(); };
+
+// ---------- Controls ----------
+function fillSelects() {
+  $('key').innerHTML = NOTE_NAMES.map((n, i) => `<option value="${i}">${n}</option>`).join('');
+  $('octave').innerHTML = [1, 2, 3, 4, 5, 6].map(o => `<option value="${o}">Oct ${o}</option>`).join('');
+  $('scale').innerHTML = Object.entries(SCALES).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
+  $('gridMax').innerHTML = Array.from({ length: 12 }, (_, i) => i + 1).map(h =>
+    `<option value="${h}">${h === 1 ? 'Whole beats only' : `Up to 1/${h} beat`}</option>`).join('');
+  $('rPreset').innerHTML = '<option value="">Presets…</option>' +
+    Object.entries(RHYTHM_PRESETS).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
+  $('preset').innerHTML = Object.entries(PRESETS).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
+  fillDegrees();
+}
+function fillDegrees() {
+  const iv = scaleIntervals();
+  S.startDeg = clamp(S.startDeg, 1, iv.length);
+  $('startDeg').innerHTML = iv.map((semi, i) =>
+    `<option value="${i + 1}">${i + 1} (${NOTE_NAMES[(S.key + semi) % 12]})</option>`).join('');
+  $('startDeg').value = S.startDeg;
+}
+function syncVisibility() {
+  $('f-mult').classList.toggle('hidden', S.pattern === 'random' || S.pattern === 'custom');
+  $('f-rand').classList.toggle('hidden', S.pattern !== 'random');
+  $('f-custom').classList.toggle('hidden', S.pattern !== 'custom');
+  $('parts').disabled = S.pattern === 'custom';
+  $('f-cscale').classList.toggle('hidden', S.scale !== 'custom');
+}
+function writeControls() {
+  for (const id of ['bpm', 'minutes', 'N', 'parts', 'pattern', 'mult', 'randRange', 'customText',
+    'key', 'octave', 'scale', 'customScale', 'degStep', 'order', 'preset',
+    'decay', 'bright', 'mallet', 'reverb', 'spread', 'volume', 'viewSecs', 'flip', 'stopAtEnd', 'gridMax', 'lenMode', 'accent',
+    'fadeOn', 'fadeBeats', 'fadeShape', 'fadeStart', 'fadeDepth', 'tuning', 'a4',
+    'shiftOn', 'shiftBeats', 'shiftSeq', 'shiftUnit']) {
+    $(id).value = S[id];
+  }
+  if (S.pattern === 'custom') $('parts').value = computeOffsets().length;
+  fillDegrees();
+  syncVisibility();
+}
+
+const NUM = v => (isFinite(+v) ? +v : 0);
+function on(id, evt, fn) { $(id).addEventListener(evt, () => fn($(id).value)); }
+
+on('bpm', 'change', v => {
+  S.bpm = clamp(NUM(v) || 60, 1, 600);
+  S.N = Math.max(1, Math.round(S.bpm * S.minutes));
+  writeControls(); rebuildStructure();
+});
+on('minutes', 'change', v => {
+  S.minutes = Math.max(0.05, NUM(v) || 10);
+  S.N = Math.max(1, Math.round(S.bpm * S.minutes));
+  writeControls(); rebuildStructure();
+});
+on('N', 'change', v => {
+  S.N = Math.max(1, Math.round(NUM(v) || 1));
+  S.minutes = +(S.N * (S.lenMode === 'full' ? spanCycles : 1) / S.bpm).toFixed(4);
+  writeControls(); rebuildStructure();
+});
+on('parts', 'change', v => { S.parts = clamp(Math.round(NUM(v)) || 1, 1, 48); writeControls(); rebuildStructure(); });
+on('pattern', 'change', v => { S.pattern = v; writeControls(); rebuildStructure(); });
+on('mult', 'change', v => { S.mult = Math.max(1, Math.round(NUM(v)) || 1); writeControls(); rebuildStructure(); });
+on('randRange', 'change', v => { S.randRange = Math.max(1, Math.round(NUM(v)) || 1); writeControls(); rebuildStructure(); });
+$('reroll').onclick = () => { S.randSeed++; rebuildStructure(); if (S.order === 'shuffle') rebuildNotes(); };
+on('customText', 'change', v => { S.customText = v; writeControls(); rebuildStructure(); });
+
+const pitchChange = (key, parse) => v => { S[key] = parse(v); S.overrides = {}; fillDegrees(); syncVisibility(); rebuildNotes(); };
+on('key', 'change', pitchChange('key', Number));
+on('octave', 'change', pitchChange('octave', Number));
+on('scale', 'change', pitchChange('scale', String));
+on('customScale', 'change', pitchChange('customScale', String));
+on('startDeg', 'change', pitchChange('startDeg', Number));
+on('degStep', 'change', pitchChange('degStep', Number));
+on('order', 'change', pitchChange('order', String));
+
+on('preset', 'change', v => {
+  S.preset = v;
+  const P = PRESETS[v];
+  S.decay = P.decay; S.bright = P.bright; S.mallet = P.mallet;
+  writeControls(); save();
+  if (counts.length) audition(0);
+});
+for (const k of ['decay', 'bright', 'mallet']) on(k, 'input', v => { S[k] = NUM(v); save(); });
+on('reverb', 'input', v => { S.reverb = NUM(v); if (wet) wet.gain.setTargetAtTime(S.reverb * 0.9, actx.currentTime, 0.05); save(); });
+on('spread', 'input', v => { S.spread = NUM(v); updateMix(); save(); });
+on('volume', 'input', v => { S.volume = NUM(v); if (master) master.gain.setTargetAtTime(S.volume, actx.currentTime, 0.03); save(); });
+on('viewSecs', 'input', v => { S.viewSecs = NUM(v); save(); });
+on('flip', 'change', v => { S.flip = +v; save(); });
+on('lenMode', 'change', v => {
+  S.lenMode = v;
+  // keep the current tempo; reinterpret the length field
+  S.minutes = +(S.N * (v === 'full' ? spanCycles : 1) / S.bpm).toFixed(4);
+  writeControls(); rebuildStructure();
+});
+on('rLen', 'change', v => {
+  const L = clamp(Math.round(NUM(v)) || 1, 1, 32);
+  while (S.rhythm.length < L) S.rhythm.push(1);
+  S.rhythm.length = L;
+  rhythmChanged();
+});
+on('rPreset', 'change', v => {
+  if (!RHYTHM_PRESETS[v]) return;
+  S.rhythm = RHYTHM_PRESETS[v].r.slice();
+  $('rPreset').value = '';
+  rhythmChanged();
+});
+$('steps').addEventListener('click', ev => {
+  const b = ev.target.closest('[data-step]');
+  if (!b) return;
+  S.rhythm[+b.dataset.step] = (S.rhythm[+b.dataset.step] + 1) % 3;
+  rhythmChanged();
+});
+$('rotL').onclick = () => { S.rhythm.push(S.rhythm.shift()); rhythmChanged(); };
+$('rotR').onclick = () => { S.rhythm.unshift(S.rhythm.pop()); rhythmChanged(); };
+$('rInv').onclick = () => { S.rhythm = S.rhythm.map(v => (v ? 0 : 1)); rhythmChanged(); };
+on('accent', 'input', v => { S.accent = NUM(v); save(); });
+on('fadeOn', 'change', v => { S.fadeOn = +v; rebuildStructure(); });
+on('fadeBeats', 'change', v => { S.fadeBeats = clamp(Math.round(NUM(v)) || 64, 2, 4096); writeControls(); rebuildStructure(); });
+on('fadeShape', 'change', v => { S.fadeShape = v; save(); });
+on('fadeStart', 'change', v => { S.fadeStart = v; save(); });
+on('fadeDepth', 'input', v => { S.fadeDepth = NUM(v); save(); });
+on('tuning', 'change', v => { S.tuning = v; save(); if (counts.length) audition(0); });
+on('shiftOn', 'change', v => { S.shiftOn = +v; rebuildStructure(); });
+on('shiftBeats', 'change', v => { S.shiftBeats = clamp(Math.round(NUM(v)) || 20, 1, 4096); writeControls(); rebuildStructure(); });
+on('shiftSeq', 'change', v => { S.shiftSeq = v; rebuildStructure(); });
+on('shiftUnit', 'change', v => { S.shiftUnit = v; renderShift(); save(); });
+on('a4', 'change', v => { S.a4 = clamp(NUM(v) || 440, 380, 480); writeControls(); save(); });
+on('gridMax', 'change', v => { S.gridMax = +v; alignment = computeAlignment(); save(); });
+on('stopAtEnd', 'change', v => {
+  S.stopAtEnd = +v;
+  // turning it on mid-play stops at the end of the current cycle
+  if (playing) stopCycle = (Math.floor(Math.max(0, elapsed()) / (T * spanCycles)) + 1) * spanCycles;
+  save();
+});
+
+// Full screen for the main display. Falls back to a fixed overlay where the
+// Fullscreen API is missing (e.g. iPhone Safari).
+const mainViz = $('main-viz');
+function toggleFullscreen() {
+  const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+  if (mainViz.classList.contains('fs')) {
+    mainViz.classList.remove('fs');
+    if (fsEl) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  } else {
+    mainViz.classList.add('fs');
+    const req = mainViz.requestFullscreen || mainViz.webkitRequestFullscreen;
+    if (req) Promise.resolve(req.call(mainViz)).catch(() => {});
+  }
+}
+for (const evt of ['fullscreenchange', 'webkitfullscreenchange']) {
+  document.addEventListener(evt, () => {
+    if (!(document.fullscreenElement || document.webkitFullscreenElement)) mainViz.classList.remove('fs');
+  });
+}
+$('fs').onclick = toggleFullscreen;
+$('lanes').addEventListener('dblclick', toggleFullscreen);
+$('fs-play').onclick = () => (playing ? pause() : play());
+
+$('play').onclick = () => (playing ? pause() : play());
+$('reset').onclick = () => seek(0);
+document.addEventListener('keydown', ev => {
+  if (ev.target.closest('input, select, textarea')) return;
+  if (ev.code === 'Space') { ev.preventDefault(); playing ? pause() : play(); }
+  if (ev.code === 'Home') { ev.preventDefault(); seek(0); }
+  if (ev.code === 'KeyF' && !ev.metaKey && !ev.ctrlKey) { ev.preventDefault(); toggleFullscreen(); }
+  if (ev.code === 'Escape' && mainViz.classList.contains('fs')) toggleFullscreen();
+});
+
+// ---------- Visuals ----------
+const cvs = {
+  lanes: $('lanes'), overview: $('overview'), dial: $('dial'),
+};
+const g2 = {};
+for (const k in cvs) g2[k] = cvs[k].getContext('2d');
+function fitCanvas(c) {
+  const dpr = window.devicePixelRatio || 1;
+  const r = c.getBoundingClientRect();
+  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  const ctx = c.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { w: r.width, h: r.height, ctx };
+}
+function sizeLanes() {
+  const n = counts.length;
+  cvs.lanes.style.height = clamp(n * 30 + 24, 180, 560) + 'px';
+}
+
+function drawLanes(e) {
+  const { w: W, h: H, ctx } = fitCanvas(cvs.lanes);
+  ctx.clearRect(0, 0, W, H);
+  const n = counts.length;
+  const labelW = 50, top = 18, bottom = 6;
+  const laneH = (H - top - bottom) / n;
+  // row for each part: highest note on top, lowest at the bottom (ties: part 1 lowest)
+  const row = new Array(n);
+  Array.from({ length: n }, (_, i) => i)
+    .sort((a, b) => notes[b] - notes[a] || b - a)
+    .forEach((p, r) => { row[p] = r; });
+  const dir = S.flip ? -1 : 1;                // 1: hits travel left → right
+  const plotW = W - labelW;
+  const nowX = labelW + plotW * (dir === 1 ? 0.8 : 0.2);
+  const pps = plotW / S.viewSecs;
+  const xOf = tb => nowX - dir * (tb - e) * pps;
+  const tA = e + (dir === 1 ? (nowX - labelW) : (W - nowX)) / pps;   // furthest future
+  const tB = e - (dir === 1 ? (W - nowX) : (nowX - labelW)) / pps;   // furthest past
+
+  // lanes background
+  for (let i = 0; i < n; i++) {
+    const y = top + i * laneH;
+    if (i % 2) { ctx.fillStyle = 'rgba(255,255,255,0.025)'; ctx.fillRect(labelW, y, plotW, laneH); }
+  }
+
+  ctx.save();
+  ctx.beginPath(); ctx.rect(labelW, 0, plotW, H); ctx.clip();
+
+  // seconds grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1;
+  const step = S.viewSecs > 20 ? 5 : 1;
+  for (let s = Math.ceil(tB / step) * step; s <= tA; s += step) {
+    const x = Math.round(xOf(s)) + 0.5;
+    ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, H - bottom); ctx.stroke();
+  }
+  // sync points: full (rhythm too) and pulse-only
+  for (let c = Math.ceil(tB / T); c <= Math.floor(tA / T); c++) {
+    const x = xOf(c * T);
+    const full = c % spanCycles === 0;
+    ctx.strokeStyle = full ? 'rgba(242,180,90,0.55)' : 'rgba(242,180,90,0.25)'; ctx.lineWidth = full ? 2 : 1;
+    ctx.beginPath(); ctx.moveTo(x, top - 4); ctx.lineTo(x, H - bottom); ctx.stroke();
+    ctx.fillStyle = full ? 'rgba(242,180,90,0.9)' : 'rgba(242,180,90,0.55)';
+    ctx.font = '600 10px system-ui'; ctx.textAlign = dir === 1 ? 'right' : 'left';
+    ctx.fillText(full ? 'SYNC' : 'PULSE SYNC', x + (dir === 1 ? -5 : 5), 11);
+  }
+  const rhy = S.rhythm, RL = rhy.length;
+
+  // hits
+  const r = clamp(laneH * 0.32, 2.5, 9);
+  for (let i = 0; i < n; i++) {
+    const cy = top + (row[i] + 0.5) * laneH;
+    const dt = T / counts[i];
+    const muted = !audible(i);
+    const k0 = Math.ceil(tB / dt), k1 = Math.floor(tA / dt);
+    const hue = partHue(i, n);
+    for (let k = k0; k <= k1; k++) {
+      const tb = k * dt;
+      const age = e - tb;
+      const x = xOf(tb);
+      const hy = cy - clamp(shiftAt(k), -3, 3) * laneH * 0.12;   // transposed notes sit higher/lower
+      let alpha, rad = r;
+      const stepV = rhy[mod(k, RL)];
+      if (!stepV) {
+        // silent step: a faint tick so the underlying pulse stays visible
+        ctx.fillStyle = `hsla(${hue},40%,60%,${muted ? 0.08 : 0.22})`;
+        ctx.beginPath(); ctx.arc(x, hy, Math.max(1.2, r * 0.22), 0, Math.PI * 2); ctx.fill();
+        continue;
+      }
+      // size follows accent, brightness follows the fade
+      const fg = fadeGain(k);
+      rad = r * (stepV === 2 ? 1.3 : 1) * (0.55 + 0.45 * Math.min(1, fg));
+      const dim = 0.2 + 0.8 * Math.min(1, fg);
+      if (age < 0) {
+        alpha = (0.35 + 0.45 * Math.max(0, 1 + age / 1.5)) * dim;
+        ctx.strokeStyle = `hsla(${hue},78%,62%,${alpha * (muted ? 0.35 : 1)})`;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(x, hy, rad * 0.85, 0, Math.PI * 2); ctx.stroke();
+      } else {
+        const glow = playing ? Math.max(0, 1 - age / 0.25) : 0;
+        alpha = Math.max(0.18, Math.exp(-age / 3)) * dim;
+        rad *= 1 + glow * 0.7;
+        if (glow > 0 && !muted) {
+          ctx.fillStyle = `hsla(${hue},90%,70%,${glow * 0.35})`;
+          ctx.beginPath(); ctx.arc(x, hy, rad * 2, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.fillStyle = `hsla(${hue},78%,${62 + glow * 20}%,${alpha * (muted ? 0.3 : 1)})`;
+        ctx.beginPath(); ctx.arc(x, hy, rad, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+  }
+  ctx.restore();
+
+  // now line
+  ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(Math.round(nowX) + 0.5, top - 4); ctx.lineTo(Math.round(nowX) + 0.5, H - bottom); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.font = '10px system-ui'; ctx.textAlign = dir === 1 ? 'left' : 'right';
+  ctx.fillText('NOW', nowX + (dir === 1 ? 5 : -5), 11);
+
+  // labels with hit flash
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.font = `${clamp(laneH * 0.45, 9, 13)}px ui-monospace, Menlo, monospace`;
+  for (let i = 0; i < n; i++) {
+    const cy = top + (row[i] + 0.5) * laneH;
+    const dt = T / counts[i];
+    const kNow = Math.floor(e / dt);
+    const age = e - kNow * dt;
+    const flash = playing && S.rhythm[mod(kNow, S.rhythm.length)] ? Math.max(0, 1 - age / 0.2) : 0;
+    const muted = !audible(i);
+    ctx.fillStyle = partColor(i, n, muted ? 0.3 : 0.55 + flash * 0.45, 62 + flash * 25);
+    ctx.fillText(noteName(transpose(notes[i], shiftAt(Math.max(0, kNow)))), 8, cy);
+  }
+  ctx.textBaseline = 'alphabetic';
+}
+
+// Max of each layer per pixel column, so dense curves don't alias into mush.
+let envCache = { key: '', pulse: null, deep: null };
+function columnMax(arr, W) {
+  if (!arr) return null;
+  const cols = new Float32Array(W), M = arr.length - 1;
+  for (let s = 0; s <= M; s++) {
+    const c = Math.min(W - 1, Math.floor(s / M * W));
+    if (arr[s] > cols[c]) cols[c] = arr[s];
+  }
+  // where samples are sparser than pixels, fill columns by interpolating at their centre
+  for (let c = 0; c < W; c++) {
+    const x = (c + 0.5) / W * M, i = Math.min(M - 1, Math.floor(x)), f = x - i;
+    const v = arr[i] * (1 - f) + arr[i + 1] * f;
+    if (v > cols[c]) cols[c] = v;
+  }
+  return cols;
+}
+function niceStep(raw, steps) { return steps.find(v => v >= raw) || steps[steps.length - 1]; }
+const TIME_STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200,
+  86400, 172800, 432000, 864000, 1728000, 4320000];
+function fmtTick(s, step) {
+  if (step < 3600) return fmtTime(s);
+  const d = Math.floor(s / 86400), h = Math.round((s % 86400) / 3600);
+  return d ? (h ? `${d}d ${h}h` : `${d}d`) : `${h}h`;
+}
+function drawOverview(e) {
+  const { w: W, h: H, ctx } = fitCanvas(cvs.overview);
+  ctx.clearRect(0, 0, W, H);
+  const bottom = 16, plotH = H - bottom - 4;
+  const cols = Math.max(1, Math.round(W));
+  const key = cols + '|' + alignment.version;
+  if (envCache.key !== key) {
+    envCache = { key, pulse: columnMax(alignment.pulse, cols), deep: columnMax(alignment.deep, cols) };
+  }
+  const yOf = v => 4 + plotH * (1 - v);
+  const area = (col, fill, stroke) => {
+    ctx.beginPath(); ctx.moveTo(0, plotH + 4);
+    for (let c = 0; c < cols; c++) ctx.lineTo((c + 0.5) / cols * W, yOf(col[c]));
+    ctx.lineTo(W, plotH + 4); ctx.closePath();
+    ctx.fillStyle = fill; ctx.fill();
+    if (stroke) {
+      ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.beginPath();
+      for (let c = 0; c < cols; c++) { const x = (c + 0.5) / cols * W; c ? ctx.lineTo(x, yOf(col[c])) : ctx.moveTo(x, yOf(col[c])); }
+      ctx.stroke();
+    }
+  };
+  const grad = ctx.createLinearGradient(0, 4, 0, plotH + 4);
+  grad.addColorStop(0, 'rgba(111,195,223,0.65)'); grad.addColorStop(1, 'rgba(111,195,223,0.06)');
+  if (envCache.deep) {
+    if (envCache.pulse) area(envCache.pulse, 'rgba(111,195,223,0.22)', 'rgba(111,195,223,0.35)');
+    area(envCache.deep, grad, 'rgba(111,195,223,0.95)');
+  } else if (envCache.pulse) {
+    area(envCache.pulse, grad, 'rgba(111,195,223,0.9)');
+  }
+
+  // pulse-sync markers, thinned so they stay at least ~8px apart
+  const P = T * spanCycles;
+  if (spanCycles > 1) {
+    const stride = niceStep(8 / (W / spanCycles), [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000]);
+    ctx.strokeStyle = stride === 1 ? 'rgba(242,180,90,0.35)' : 'rgba(242,180,90,0.22)'; ctx.lineWidth = 1;
+    for (let c = stride; c < spanCycles; c += stride) {
+      const x = Math.round(c / spanCycles * W) + 0.5;
+      ctx.beginPath(); ctx.moveTo(x, 4); ctx.lineTo(x, plotH + 4); ctx.stroke();
+    }
+  }
+  // time ticks, at least ~80px apart
+  const tickStep = niceStep(P / Math.max(1, W / 80), TIME_STEPS);
+  ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.font = '10px system-ui'; ctx.textAlign = 'center';
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+  for (let s = tickStep; s < P - tickStep * 0.4; s += tickStep) {
+    const x = s / P * W;
+    ctx.beginPath(); ctx.moveTo(x, 4); ctx.lineTo(x, plotH + 4); ctx.stroke();
+    ctx.fillText(fmtTick(s, tickStep), x, H - 3);
+  }
+  // played region + playhead
+  const pos = mod(e, P);
+  const px = pos / P * W;
+  ctx.fillStyle = 'rgba(255,255,255,0.06)';
+  ctx.fillRect(0, 4, px, plotH);
+  ctx.strokeStyle = '#f2b45a'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, plotH + 6); ctx.stroke();
+}
+
+function drawDial(e) {
+  const { w: W, h: H, ctx } = fitCanvas(cvs.dial);
+  ctx.clearRect(0, 0, W, H);
+  const n = counts.length;
+  const cx = W / 2, cy = H / 2, R = Math.min(W, H) / 2 - 8, r0 = R * 0.18;
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx, cy - R - 4); ctx.lineTo(cx, cy - r0 + 4); ctx.strokeStyle = 'rgba(242,180,90,0.4)'; ctx.stroke();
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const rel = mod(e * (counts[i] - counts[0]) / T, 1);
+    const a = -Math.PI / 2 + rel * Math.PI * 2;
+    const rr = n < 2 ? R * 0.6 : r0 + (R - r0) * i / (n - 1);
+    pts.push([cx + Math.cos(a) * rr, cy + Math.sin(a) * rr]);
+  }
+  ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.lineWidth = 1;
+  ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.stroke();
+  const dotR = clamp(R / n * 0.45, 2.5, 6);
+  pts.forEach(([x, y], i) => {
+    ctx.fillStyle = partColor(i, n, audible(i) ? 1 : 0.3);
+    ctx.beginPath(); ctx.arc(x, y, dotR, 0, Math.PI * 2); ctx.fill();
+  });
+}
+
+let lastReadout = '';
+function updateReadout(e) {
+  const P = T * spanCycles;
+  const pos = mod(e, P);
+  $('fs-prog').style.width = (pos / P * 100).toFixed(2) + '%';
+  const multi = spanCycles > 1;
+  const endLabel = S.stopAtEnd ? 'Ends in' : (multi ? 'Full sync in' : 'Next sync');
+  const cycle = multi ? `${Math.floor(pos / T) + 1} / ${spanCycles}` : String(Math.floor(Math.max(0, e) / T) + 1);
+  const vals = [
+    `${fmtTime(pos)} / ${fmtTime(P)}`,
+    multi ? 'Next pulse sync' : endLabel, fmtTime(T - mod(e, T)),
+    endLabel, fmtTime(P - pos), cycle, multi ? '1' : '',
+  ];
+  const key = vals.join('|');
+  if (key === lastReadout) return;
+  lastReadout = key;
+  const [pos_, nextLabel, next, fullLabel, full, cyc, showFull] = vals;
+  $('r-pos').textContent = $('fs-pos').textContent = pos_;
+  $('r-next-label').textContent = nextLabel; $('r-next').textContent = next;
+  $('r-full-wrap').hidden = !showFull;
+  $('r-full-label').textContent = fullLabel; $('r-full').textContent = full;
+  $('fs-next-label').textContent = fullLabel; $('fs-next').textContent = full;
+  $('r-cycle').textContent = cyc;
+}
+
+function frame() {
+  const e = visualElapsed();
+  drawLanes(e);
+  drawOverview(e);
+  drawDial(e);
+  updateReadout(e);
+  requestAnimationFrame(frame);
+}
+
+cvs.overview.addEventListener('click', ev => {
+  const r = cvs.overview.getBoundingClientRect();
+  const frac = clamp((ev.clientX - r.left) / r.width, 0, 1);
+  const P = T * spanCycles;
+  const rep = Math.floor(Math.max(0, elapsed()) / P);
+  seek(rep * P + frac * P);
+});
+
+// ---------- Boot ----------
+fillSelects();
+writeControls();
+rebuildStructure();
+sizeLanes();
+new MutationObserver(sizeLanes).observe($('parts-body'), { childList: true });
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
