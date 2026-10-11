@@ -77,7 +77,7 @@
   .settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 12px; }
   .field { display: grid; grid-template-columns: 112px 1fr; align-items: center; gap: 8px; margin-bottom: 8px; }
   .field > label { color: var(--muted); font-size: 13px; }
-  .field.hidden { display: none; }
+  .field.hidden, .hidden { display: none !important; }
   input, select {
     font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line);
     border-radius: 6px; padding: 5px 7px; width: 100%; min-width: 0;
@@ -105,6 +105,22 @@
   }
   .step.on { background: #8a6a3a; border-color: #8a6a3a; color: #f6ead6; }
   .step.acc { background: var(--accent); border-color: #ffd89a; color: #1a1406; font-weight: 700; box-shadow: 0 0 0 1px #ffd89a inset; }
+  .mod-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .mod-row select, .mod-row input { width: auto; }
+  .mod-row input[type=number] { width: 84px; }
+  .mod-row label { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
+  .mod-row label.grow { flex: 1; min-width: 240px; }
+  .mod-row label.grow input { flex: 1; }
+  .mod-name { min-width: 150px; }
+  .mod-swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+  .modded { outline: 1px dashed var(--accent-2); outline-offset: 2px; }
+  #mod-legend { font-size: 12px; }
+  #mod-legend span { margin-right: 10px; white-space: nowrap; }
+  .setups-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .setups-row input, .setups-row select { width: auto; }
+  .setups-row h2 { margin: 0 8px 0 0; }
+  #setup-name { width: 200px; }
+  #share-url { margin-top: 8px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
   .parts-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
   .parts-head h2 { margin: 0; }
 
@@ -150,7 +166,7 @@
   <div class="card">
     <div class="viz-caption">
       <h2 style="margin:0">Whole process</h2>
-      <span class="small muted">Alignment over time · click to jump</span>
+      <span class="small muted"><span id="mod-legend"></span>Alignment over time · click to jump</span>
     </div>
     <canvas id="overview"></canvas>
   </div>
@@ -159,6 +175,20 @@
     <canvas id="dial"></canvas>
   </div>
 </div>
+
+<section class="card" style="margin-top:12px">
+  <div class="setups-row">
+    <h2>Setups</h2>
+    <input id="setup-name" type="text" placeholder="Name this setup" maxlength="80">
+    <button id="setup-save" type="button">Save</button>
+    <select id="setup-list"></select>
+    <button id="setup-load" type="button">Load</button>
+    <button id="setup-del" type="button">Delete</button>
+    <button id="setup-share" type="button">Copy share link</button>
+  </div>
+  <input id="share-url" type="text" readonly hidden>
+  <div class="note" id="setup-msg"></div>
+</section>
 
 <div class="settings">
   <section class="card">
@@ -175,9 +205,16 @@
     <div class="field"><label for="stopAtEnd">At the end</label>
       <select id="stopAtEnd">
         <option value="0">Loop forever</option>
-        <option value="1">Stop at the full sync</option>
+        <option value="1">Stop at the end</option>
       </select>
     </div>
+    <div class="field"><label for="endMode">Process ends</label>
+      <select id="endMode">
+        <option value="auto">Automatically</option>
+        <option value="cycles">After set cycles</option>
+      </select>
+    </div>
+    <div class="field" id="f-endCycles"><label for="endCycles">Cycles</label><input id="endCycles" type="number" min="1" step="1"></div>
     <div class="note" id="timing-summary"></div>
   </section>
 
@@ -252,31 +289,36 @@
     <div class="field"><label for="shiftBeats">Each step (beats)</label><input id="shiftBeats" type="number" min="1" max="4096" step="1"></div>
     <div class="field"><label for="shiftSeq">Transpose by</label><input id="shiftSeq" type="text" placeholder="0 1 -1"></div>
     <div class="field"><label for="shiftUnit">Measured in</label>
-      <select id="shiftUnit"><option value="scale">Scale steps</option><option value="semi">Semitones</option></select>
+      <select id="shiftUnit"><option value="scale">Pitch steps</option><option value="semi">Semitones</option></select>
     </div>
     <div class="note" id="shift-summary"></div>
   </section>
 
   <section class="card">
     <h2>Pitch</h2>
-    <div class="field"><label for="key">Key</label>
+    <div class="field"><label for="pitchMode">Pitches from</label>
+      <select id="pitchMode">
+        <option value="scale">A scale</option>
+        <option value="interval">A fixed interval</option>
+        <option value="custom">A custom list</option>
+      </select>
+    </div>
+    <div class="field"><label for="key" id="key-label">Key</label>
       <div class="inline">
         <select id="key"></select>
         <select id="octave" title="Octave"></select>
       </div>
     </div>
-    <div class="field"><label for="scale">Scale</label>
+    <div class="field" id="f-interval"><label for="interval">Interval (semitones)</label><input id="interval" type="number" step="1" min="-24" max="24"></div>
+    <div class="field" id="f-notes"><label for="customNotes">Notes</label><input id="customNotes" type="text" placeholder="C3 E3 G3 B3 D4"></div>
+    <div class="note" id="f-notes-help">Note names (C3, F#4, Bb2) or MIDI numbers (60 = C4), one per part. With more parts than notes, the list repeats higher up.</div>
+    <div class="field" id="f-scale"><label for="scale">Scale</label>
       <select id="scale"></select>
     </div>
     <div class="field" id="f-cscale"><label for="customScale">Semitones</label><input id="customScale" type="text" placeholder="0 2 5 7 9"></div>
-    <div class="field"><label for="startDeg">Start degree</label><select id="startDeg"></select></div>
-    <div class="field"><label for="degStep">Step</label>
-      <select id="degStep">
-        <option value="1">Every degree</option>
-        <option value="2">Every other (thirds)</option>
-        <option value="3">Every third</option>
-        <option value="4">Every fourth</option>
-      </select>
+    <div class="field" id="f-startDeg"><label for="startDeg">Start degree</label><select id="startDeg"></select></div>
+    <div class="field" id="f-degStep"><label for="degStep">Step</label>
+      <select id="degStep"></select>
     </div>
     <div class="field"><label for="order">Order</label>
       <select id="order">
@@ -312,6 +354,34 @@
   </section>
 
   <section class="card">
+    <h2>MIDI output</h2>
+    <div class="inline" style="margin-bottom:8px">
+      <button id="midi-enable" type="button">Enable MIDI</button>
+      <span id="midi-status" class="small muted"></span>
+    </div>
+    <div id="midi-body" hidden>
+      <div class="field"><label for="midi-mode">Channels</label>
+        <select id="midi-mode">
+          <option value="part">One per part (spills to more ports)</option>
+          <option value="single">All parts on one channel</option>
+        </select>
+      </div>
+      <div id="midi-ports"></div>
+      <div class="field" id="f-midi-ch"><label for="midi-ch">Channel</label><select id="midi-ch"></select></div>
+      <div class="field"><label for="midi-gate">Note length (ms)</label><input id="midi-gate" type="number" min="5" max="5000" step="1"></div>
+      <div class="field"><label for="midi-internal">Built-in sound</label>
+        <select id="midi-internal"><option value="1">Keep playing</option><option value="0">Mute (MIDI only)</option></select>
+      </div>
+      <div class="field" id="f-midi-bend"><label for="midi-bend">Tuning / A4</label>
+        <select id="midi-bend"><option value="0">Ignore (equal temperament)</option><option value="1">Send as pitch bend</option></select>
+      </div>
+      <div class="field" id="f-midi-range"><label for="midi-range">Bend range (±st)</label><input id="midi-range" type="number" min="1" max="48" step="1"></div>
+      <div class="inline"><button id="midi-test" type="button" class="toggle">Send test note</button><span id="midi-test-msg" class="small muted"></span></div>
+      <div class="note" id="midi-summary"></div>
+    </div>
+  </section>
+
+  <section class="card">
     <h2>View</h2>
     <div class="field"><label for="viewSecs">Window (sec)</label><input id="viewSecs" type="range" min="2" max="40" step="0.5"></div>
     <div class="field"><label for="gridMax">Graph detail</label>
@@ -326,6 +396,15 @@
     <div class="note">Space plays / pauses. Home resets. F toggles full screen. Click a colour dot in the parts table to audition that note.</div>
   </section>
 </div>
+
+<section class="card" style="margin-top:12px">
+  <div class="parts-head">
+    <h2>Changes over time</h2>
+    <select id="mod-add" style="width:auto"></select>
+  </div>
+  <div class="note" id="mod-note"></div>
+  <div id="mod-rows"></div>
+</section>
 
 <section class="card" style="margin-top:12px">
   <div class="parts-head">
@@ -391,18 +470,70 @@ const DEFAULTS = {
   shiftOn: 0, shiftBeats: 20, shiftSeq: '0 1 -1', shiftUnit: 'scale',
   fadeOn: 0, fadeBeats: 64, fadeShape: 'sine', fadeStart: 'loud', fadeDepth: 1,
   tuning: 'equal', a4: 440,
+  mods: {}, endMode: 'auto', endCycles: 6,
+  pitchMode: 'scale', interval: 7, customNotes: 'C3 E3 G3 B3 D4 F#4 A4 C5',
   overrides: {}, mute: {}, solo: {},
 };
 const STORE_KEY = 'phase-pulses-v1';
-const S = structuredClone(DEFAULTS);
-try {
-  const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
-  if (saved && typeof saved === 'object') {
-    for (const k of Object.keys(DEFAULTS)) if (k in saved && typeof saved[k] === typeof DEFAULTS[k]) S[k] = saved[k];
+// Build a full, valid settings object from anything (storage, a saved setup, a link).
+function sanitize(obj) {
+  const out = structuredClone(DEFAULTS);
+  if (obj && typeof obj === 'object') {
+    for (const k of Object.keys(DEFAULTS)) {
+      if (k in obj && obj[k] !== null && typeof obj[k] === typeof DEFAULTS[k]) out[k] = structuredClone(obj[k]);
+    }
   }
-} catch (e) { /* storage unavailable */ }
-if (!Array.isArray(S.rhythm) || !S.rhythm.length) S.rhythm = [1];
-S.rhythm = S.rhythm.slice(0, 32).map(v => Math.min(2, Math.max(0, Math.round(+v) || 0)));   // 0 off, 1 on, 2 accent
+  if (!Array.isArray(out.rhythm) || !out.rhythm.length) out.rhythm = [1];
+  out.rhythm = out.rhythm.slice(0, 32).map(v => Math.min(2, Math.max(0, Math.round(+v) || 0)));   // 0 off, 1 on, 2 accent
+  return out;
+}
+function readJSON(key) {
+  try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch (e) { return null; }
+}
+function writeJSON(key, v) {
+  try { localStorage.setItem(key, JSON.stringify(v)); return true; } catch (e) { return false; }
+}
+const S = sanitize(readJSON(STORE_KEY));
+
+// ---------- Saved setups and share links ----------
+const SETUPS_KEY = 'phase-pulses-setups-v1';
+function loadSetups() { const v = readJSON(SETUPS_KEY); return v && typeof v === 'object' ? v : {}; }
+// Only settings that differ from the defaults go into a link, to keep it short.
+function encodeConfig(cfg) {
+  const diff = {};
+  for (const k of Object.keys(DEFAULTS)) if (JSON.stringify(cfg[k]) !== JSON.stringify(DEFAULTS[k])) diff[k] = cfg[k];
+  const bytes = new TextEncoder().encode(JSON.stringify(diff));
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function decodeConfig(str) {
+  const bin = atob(str.replace(/-/g, '+').replace(/_/g, '/'));
+  return JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, c => c.charCodeAt(0))));
+}
+let linkNotice = '';
+// A link with ?s=… replaces the current settings. Whatever was there before is kept as
+// a saved setup, and the parameter is removed so later edits aren't undone on reload.
+(() => {
+  const param = new URLSearchParams(location.search).get('s');
+  if (!param) return;
+  let incoming;
+  try { incoming = sanitize(decodeConfig(param)); } catch (e) { linkNotice = 'That link could not be read, so your settings were left as they were.'; return; }
+  if (JSON.stringify(incoming) !== JSON.stringify(S)) {
+    const setups = loadSetups();
+    const name = 'Before opening a link (' + new Date().toLocaleString() + ')';
+    setups[name] = { savedAt: Date.now(), config: structuredClone(S) };
+    writeJSON(SETUPS_KEY, setups);
+    linkNotice = `Loaded the setup from the link. Your previous settings were saved as "${name}".`;
+  } else linkNotice = 'Loaded the setup from the link.';
+  for (const k of Object.keys(DEFAULTS)) S[k] = incoming[k];
+  writeJSON(STORE_KEY, S);
+  try {
+    const url = new URL(location.href);
+    url.searchParams.delete('s');
+    history.replaceState(null, '', url);
+  } catch (e) {}
+})();
 let saveTimer = 0;
 function save() {
   clearTimeout(saveTimer);
@@ -418,6 +549,8 @@ let alignment = { pulse: null, deep: null, version: 0 };
 let period = 1;         // shortest repeat of the on/off rhythm
 let spanCycles = 1;     // pulse cycles until the rhythm (and fades) realign too
 let cyclePeriod = 1;    // beats per repeat of rhythm and fade combined
+let spanReason = 'sync'; // why the process is spanCycles long: sync | curve | periodic | set
+let Gfade = null, Gshift = null;   // integrals of 1/length when those lengths change over time
 const RHYTHM_PRESETS = {
   pulse:    { label: 'Steady pulse', r: [1] },
   clapping: { label: 'Clapping Music (Reich)', r: [1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0] },
@@ -440,11 +573,11 @@ const TUNINGS = {
   meantone: [0, 76.0, 193.2, 310.3, 386.3, 503.4, 579.5, 696.6, 772.6, 889.7, 1006.8, 1082.9],
 };
 // The root stays where equal temperament puts it; other notes are tuned relative to it.
-function mtof(m) {
+function mtof(m, a4 = S.a4) {
   const table = TUNINGS[S.tuning];
   const pc = table ? ((m - S.key) % 12 + 12) % 12 : 0;
   const cents = table ? table[pc] - pc * 100 : 0;
-  return S.a4 * Math.pow(2, (m - 69) / 12 + cents / 1200);
+  return a4 * Math.pow(2, (m - 69) / 12 + cents / 1200);
 }
 const noteName = m => NOTE_NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
 const mod = (a, b) => ((a % b) + b) % b;
@@ -467,7 +600,7 @@ const PRIMES = (() => {
   return out;
 })();
 function parseNums(text) {
-  return (text.match(/-?\d+(\.\d+)?/g) || []).map(Number);
+  return (String(text ?? '').match(/-?\d+(\.\d+)?/g) || []).map(Number);
 }
 function partHue(i, n) { return (200 + (n <= 1 ? 0 : i * 300 / n)) % 360; }
 function partColor(i, n, a = 1, l = 62) { return `hsla(${partHue(i, n)}, 78%, ${l}%, ${a})`; }
@@ -506,11 +639,20 @@ function computeOffsets() {
   return offs.map(o => Math.max(o, 1 - S.N));
 }
 
-// Fade level for beat k of a part (fades are measured in each part's own beats).
-function fadeGain(k) {
+// Beat k of part i, counted from the start of the current run of the process.
+function localK(i, k) { return mod(k, counts[i] * spanCycles); }
+
+// Fade level for beat k of part i (fades are measured in each part's own beats).
+// When the fade length changes over time, each part advances 1/length per beat, so
+// its position is counts[i] × ∫ du / length(u) — one shared integral for all parts.
+function fadeGain(i, k) {
   if (!S.fadeOn) return 1;
-  const F = Math.max(2, Math.round(S.fadeBeats));
-  const ph = mod(k, F) / F;
+  const kl = localK(i, k), u = when(i, kl);
+  let ph;
+  // beats advance the fade by 1/length; summed over a part's beats that is
+  // counts[i]·G(shared time), or n·G(own time) with a per-part clock
+  if (Gfade) ph = mod(Gfade.perPart ? S.N * evalInt(Gfade, u.p) : counts[i] * evalInt(Gfade, u.s), 1);
+  else { const F = Math.max(2, Math.round(S.fadeBeats)); ph = mod(kl, F) / F; }
   let env;
   switch (S.fadeShape) {
     case 'tri':  env = Math.abs(2 * ph - 1); break;
@@ -519,17 +661,20 @@ function fadeGain(k) {
     default:     env = 0.5 + 0.5 * Math.cos(2 * Math.PI * ph);
   }
   if (S.fadeStart === 'quiet') env = 1 - env;
-  return 1 - S.fadeDepth * (1 - env * env);
+  return 1 - val('fadeDepth', u) * (1 - env * env);
 }
 // Note changes: every shiftBeats of a part's own beats, step through the transpose list.
 function shiftList() {
   const seq = parseNums(S.shiftSeq).map(Math.round).slice(0, 32);
   return seq.length ? seq : [0];
 }
-function shiftAt(k) {
+function shiftAt(i, k) {
   if (!S.shiftOn) return 0;
-  const seq = shiftList();
-  return seq[mod(Math.floor(k / Math.max(1, Math.round(S.shiftBeats))), seq.length)];
+  const seq = shiftList(), kl = localK(i, k);
+  const block = Gshift
+    ? Math.floor((Gshift.perPart ? S.N * evalInt(Gshift, kl / S.N) : counts[i] * evalInt(Gshift, kl / counts[i])) + 1e-6)
+    : Math.floor(kl / Math.max(1, Math.round(S.shiftBeats)));
+  return seq[mod(block, seq.length)];
 }
 // Beats per repeat of the note-change cycle (1 if it never changes anything).
 function shiftPeriod() {
@@ -541,13 +686,24 @@ function shiftPeriod() {
 function transpose(m, off) {
   if (!off) return m;
   if (S.shiftUnit === 'semi') return clamp(m + off, 12, 120);
+  // interval mode: a step is one interval
+  if (S.pitchMode === 'interval') return clamp(m + off * (Math.round(S.interval) || 1), 12, 120);
+  // custom list: a step moves along the list (and its octave repeats)
+  if (S.pitchMode === 'custom') {
+    const lad = [...new Set(customLadder())].sort((a, b) => a - b), len = lad.length;
+    const span = 12 * Math.max(1, Math.ceil((lad[len - 1] - lad[0] + 1) / 12));
+    const oct = Math.floor((m - lad[0]) / span), idx = lad.indexOf(m - oct * span);
+    if (idx < 0) return clamp(m + off, 12, 120);
+    const d = oct * len + idx + off;
+    return clamp(lad[mod(d, len)] + span * Math.floor(d / len), 12, 120);
+  }
   const iv = scaleIntervals(), len = iv.length;
   const idx = iv.indexOf(mod(m - S.key, 12));
   if (idx < 0) return clamp(m + off, 12, 120);
   const d = Math.floor((m - S.key) / 12) * len + idx + off;
   return clamp(S.key + 12 * Math.floor(d / len) + iv[mod(d, len)], 12, 120);
 }
-function stepGain(v) { return v === 2 ? 1 + S.accent * 1.5 : 1; }
+function stepGain(v, u) { return v === 2 ? 1 + val('accent', u) * 1.5 : 1; }
 const gcd = (a, b) => (b ? gcd(b, a % b) : a);
 const lcm = (a, b) => a / gcd(a, b) * b;
 
@@ -568,12 +724,135 @@ function fullCycles(p, offs) {
   return l;
 }
 
+// ---------- Changes over time ----------
+// Times are in pulse cycles from the start of the process.
+const MODS = {
+  fadeBeats:  { label: 'Fade length (beats)', min: 2, max: 4096, structural: true, int: true },
+  shiftBeats: { label: 'Note step (beats)', min: 1, max: 4096, structural: true, int: true },
+  fadeDepth:  { label: 'Fade depth', min: 0, max: 1 },
+  accent:     { label: 'Accent boost', min: 0, max: 1 },
+  a4:         { label: 'A4 tuning (Hz)', min: 380, max: 480 },
+  decay:      { label: 'Decay', min: 0.05, max: 4 },
+  bright:     { label: 'Brightness', min: 0, max: 1 },
+  mallet:     { label: 'Mallet hardness', min: 0, max: 1 },
+  reverb:     { label: 'Reverb', min: 0, max: 1, global: true },   // whole mix: shared clock only
+  volume:     { label: 'Volume', min: 0, max: 1, global: true },
+};
+const MOD_COLORS = ['#f2b45a', '#e0716b', '#b48cf2', '#7fd18b', '#f29ad8', '#e8e27a', '#8fb3ff', '#ff9f6b', '#9be3d6', '#d9d9d9'];
+let compiled = {};   // key -> u => value, with .end (cycle the curve finishes, or null if it repeats)
+
+function envPoints(text) {
+  const nums = parseNums(text), pts = [];
+  for (let i = 0; i + 1 < nums.length; i += 2) pts.push([Math.max(0, nums[i]), nums[i + 1]]);
+  return pts.sort((a, b) => a[0] - b[0]);
+}
+function compileMods() {
+  compiled = {};
+  for (const [key, m] of Object.entries(S.mods)) {
+    const spec = MODS[key];
+    if (!spec) continue;
+    let f;
+    if (m.mode === 'lfo') {
+      const lo = +m.lo, hi = +m.hi, per = Math.max(0.01, +m.period || 1), tri = m.shape === 'tri';
+      // starts at "from", reaches "to" half a period later
+      f = u => {
+        const ph = mod(u / per, 1);
+        const w = tri ? 1 - Math.abs(2 * ph - 1) : 0.5 - 0.5 * Math.cos(2 * Math.PI * ph);
+        return lo + (hi - lo) * w;
+      };
+      f.end = null;
+    } else {
+      const pts = envPoints(m.points);
+      if (!pts.length) continue;
+      const last = pts[pts.length - 1][0], exp = m.curve === 'exp', loop = !!m.loop && last > 0;
+      f = u => {
+        if (loop) u = mod(u, last);
+        if (u <= pts[0][0]) return pts[0][1];
+        for (let j = 1; j < pts.length; j++) {
+          const [ta, va] = pts[j - 1], [tb, vb] = pts[j];
+          if (u <= tb) {
+            const x = tb > ta ? (u - ta) / (tb - ta) : 1;
+            return exp && va > 0 && vb > 0 ? va * Math.pow(vb / va, x) : va + (vb - va) * x;
+          }
+        }
+        return pts[pts.length - 1][1];
+      };
+      f.end = loop ? null : last;
+    }
+    const g = u => clamp(f(u), spec.min, spec.max);
+    g.end = f.end;
+    g.perPart = m.clock === 'part' && !spec.global;
+    compiled[key] = g;
+  }
+}
+function isMod(key) { return !!compiled[key]; }
+// Curve time for beat kl (counted from the process start) of part i:
+//   s: the shared clock, in pulse cycles (same moment → same value for every part)
+//   p: the part's own clock — its beats so far ÷ n, so faster parts run ahead along the curve
+function when(i, kl) { return { s: kl / counts[i], p: kl / S.N }; }
+// u is a plain time (shared clock) or a when() pair; each curve picks its own clock.
+function val(key, u) {
+  const f = compiled[key];
+  if (!f) return S[key];
+  return f(typeof u === 'number' ? u : f.perPart ? u.p : u.s);
+}
+// Position in the process (cycles) for the current transport time.
+function nowU() { return mod(elapsed() / T, spanCycles); }
+
+// Running integral of 1 / value over the process, sampled on a grid and interpolated.
+function buildIntegral(key) {
+  const res = clamp(Math.floor(2e6 / spanCycles), 4, 256);
+  // with a per-part clock the fastest part gets furthest along the curve
+  const len = Math.ceil(spanCycles * Math.max(1, Math.max(...counts) / S.N) * res) + 1;
+  const G = new Float64Array(len + 1);
+  let prev = 1 / val(key, 0);
+  for (let j = 1; j <= len; j++) {
+    const cur = 1 / val(key, j / res);
+    G[j] = G[j - 1] + (prev + cur) / (2 * res);
+    prev = cur;
+  }
+  return { G, res, perPart: compiled[key].perPart };
+}
+function evalInt(I, u) {
+  const x = clamp(u * I.res, 0, I.G.length - 1);
+  const j = Math.min(I.G.length - 2, Math.floor(x));
+  if (j < 0) return 0;
+  const f = x - j;
+  return I.G[j] * (1 - f) + I.G[j + 1] * f;
+}
+function minOver(key) {
+  let m = Infinity;
+  for (let s = 0; s <= 512; s++) m = Math.min(m, val(key, s / 512 * spanCycles));
+  return m;
+}
+
 function scaleIntervals() {
   if (S.scale === 'custom') {
     const iv = [...new Set(parseNums(S.customScale).map(v => mod(Math.round(v), 12)))].sort((a, b) => a - b);
     return iv.length ? iv : [0];
   }
   return SCALES[S.scale].iv;
+}
+
+// "C3", "F#4", "Bb2", "E♭3" or a MIDI number → MIDI note (null if unreadable).
+function parseNote(tok) {
+  if (/^-?\d+$/.test(tok)) return clamp(+tok, 0, 127);
+  const m = /^([A-Ga-g])(#|♯|b|♭)?(-?\d+)$/.exec(tok);
+  if (!m) return null;
+  const pc = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11 }[m[1].toLowerCase()];
+  const acc = m[2] === '#' || m[2] === '♯' ? 1 : m[2] ? -1 : 0;
+  return clamp(12 * (+m[3] + 1) + pc + acc, 0, 127);
+}
+function customLadder() {
+  const toks = String(S.customNotes).split(/[\s,]+/).filter(Boolean);
+  const notes = toks.map(parseNote).filter(v => v != null);
+  return notes.length ? notes : [60];
+}
+// Step d of the custom list; past the end it repeats, shifted up by whole octaves.
+function ladderAt(lad, d) {
+  const len = lad.length, sorted = [...lad].sort((a, b) => a - b);
+  const shift = 12 * Math.max(1, Math.ceil((sorted[len - 1] - sorted[0] + 1) / 12));
+  return lad[mod(d, len)] + shift * Math.floor(d / len);
 }
 
 function computeNotes(n) {
@@ -588,6 +867,13 @@ function computeNotes(n) {
     const rnd = mulberry32(S.randSeed * 104729 + n);
     for (let i = n - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [pos[i], pos[j]] = [pos[j], pos[i]]; }
   }
+  if (S.pitchMode === 'interval') {
+    return pos.map((p, i) => (S.overrides[i] != null ? S.overrides[i] : clamp(root + p * Math.round(S.interval), 12, 120)));
+  }
+  if (S.pitchMode === 'custom') {
+    const lad = customLadder();
+    return pos.map((p, i) => (S.overrides[i] != null ? S.overrides[i] : clamp(ladderAt(lad, p), 12, 120)));
+  }
   return pos.map((p, i) => {
     if (S.overrides[i] != null) return S.overrides[i];
     if (S.scale === 'unison') return root + iv[0];
@@ -601,41 +887,67 @@ function computeNotes(n) {
 //  - deep:  h = 1/period levels (same rhythm step / fade / note change) — slow structure
 //  - pulse: h = 1..gridMax (beats lining up) — fast; only kept when the process is short
 //           enough for it to be resolvable on screen
-function alignLayer(levels, M) {
-  const n = counts.length, out = new Float32Array(M + 1);
-  const base = 1 / Math.sqrt(n);
-  for (let s = 0; s <= M; s++) {
-    const t = s / M * spanCycles;   // in pulse cycles
-    let best = 0;
-    for (const [h, w] of levels) {
-      let re = 0, im = 0;
-      for (let i = 0; i < n; i++) {
-        // phase of part i relative to part 0, in beats (keeps numbers small)
-        const ph = 2 * Math.PI * h * t * (counts[i] - counts[0]);
-        re += Math.cos(ph); im += Math.sin(ph);
-      }
-      // subtract the random-phase baseline so noise doesn't look like structure
-      const v = clamp((Math.hypot(re, im) / n - base) / (1 - base), 0, 1) * w;
-      if (v > best) best = v;
-    }
-    out[s] = best;
-  }
-  return out;
-}
 function computeAlignment() {
   const n = counts.length;
   if (n < 2) return { pulse: new Float32Array([1, 1]), deep: null, version: Math.random() };
-  const maxDiff = Math.max(...counts) - Math.min(...counts);
-  const H = clamp(Math.round(S.gridMax), 1, 12);
-  const deepLevels = [];
-  if (cyclePeriod > 1) deepLevels.push([1 / cyclePeriod, 1]);
-  if (period > 1 && period !== cyclePeriod) deepLevels.push([1 / period, 0.85]);
-  const deep = deepLevels.length
-    ? alignLayer(deepLevels, clamp(Math.ceil(maxDiff * spanCycles / Math.min(period > 1 ? period : cyclePeriod, cyclePeriod) * 64), 600, 40000))
+  const offs = counts.map(c => c - counts[0]);
+  const maxDiff = Math.max(...offs) - Math.min(...offs);
+  const base = 1 / Math.sqrt(n);
+  // how tightly the parts cluster when part i sits x × offset_i around a circle
+  const R = x => {
+    let re = 0, im = 0;
+    for (const o of offs) { const ph = 2 * Math.PI * x * o; re += Math.cos(ph); im += Math.sin(ph); }
+    // subtract the random-phase baseline so noise doesn't look like structure
+    return clamp((Math.hypot(re, im) / n - base) / (1 - base), 0, 1);
+  };
+  // general version: phase (in turns) of each part given directly
+  const Rp = phase => {
+    let re = 0, im = 0;
+    for (let i = 0; i < n; i++) { const ph = 2 * Math.PI * phase(i); re += Math.cos(ph); im += Math.sin(ph); }
+    return clamp((Math.hypot(re, im) / n - base) / (1 - base), 0, 1);
+  };
+  const layer = (M, f) => {
+    const out = new Float32Array(M + 1);
+    for (let s = 0; s <= M; s++) out[s] = f(s / M * spanCycles);   // t in pulse cycles
+    return out;
+  };
+  // deep components: relative position (in repeats) of rhythm, fade and note changes
+  const comps = [];
+  let rate = 0;
+  if (period > 1) { comps.push(t => R(t / period)); rate = Math.max(rate, 1 / period); }
+  if (S.fadeOn) {
+    if (Gfade) {
+      comps.push(Gfade.perPart ? t => Rp(i => S.N * evalInt(Gfade, t * counts[i] / S.N)) : t => R(evalInt(Gfade, t)));
+      rate = Math.max(rate, 1 / minOver('fadeBeats'));
+    }
+    else { const F = Math.max(2, Math.round(S.fadeBeats)); comps.push(t => R(t / F)); rate = Math.max(rate, 1 / F); }
+  }
+  const sp = patternPeriod(shiftList());
+  if (S.shiftOn && sp > 1) {
+    if (Gshift) {
+      comps.push(Gshift.perPart ? t => Rp(i => S.N * evalInt(Gshift, t * counts[i] / S.N) / sp) : t => R(evalInt(Gshift, t) / sp));
+      rate = Math.max(rate, 1 / (minOver('shiftBeats') * sp));
+    }
+    else { const Mb = Math.max(1, Math.round(S.shiftBeats)); comps.push(t => R(t / (Mb * sp))); rate = Math.max(rate, 1 / (Mb * sp)); }
+  }
+  // all components together count fully; any single one a bit less
+  const deep = comps.length
+    ? layer(clamp(Math.ceil(maxDiff * spanCycles * rate * 64), 600, 40000), t => {
+        let mn = 1, mx = 0;
+        for (const c of comps) { const r = c(t); mn = Math.min(mn, r); mx = Math.max(mx, r); }
+        return Math.max(mn, 0.85 * mx);
+      })
     : null;
+  // pulse layer: beats landing on a common 1/h-beat grid
+  const H = clamp(Math.round(S.gridMax), 1, 12);
   const pulseM = maxDiff * spanCycles * H * 6;
-  const pulseLevels = Array.from({ length: H }, (_, i) => [i + 1, (deep ? 0.7 : 1) / Math.sqrt(i + 1)]);
-  const pulse = !deep || pulseM <= 40000 ? alignLayer(pulseLevels, clamp(pulseM, 1200, 40000)) : null;
+  const pulse = !deep || pulseM <= 40000
+    ? layer(clamp(pulseM, 1200, 40000), t => {
+        let best = 0;
+        for (let h = 1; h <= H; h++) best = Math.max(best, R(h * t) * (deep ? 0.7 : 1) / Math.sqrt(h));
+        return best;
+      })
+    : null;
   return { pulse, deep, version: Math.random() };
 }
 
@@ -697,10 +1009,11 @@ function startTimer() {
   }
 }
 
-function playVoice(t, midi, dest, vel = 1) {
-  const f0 = mtof(midi);
+function playVoice(t, midi, dest, vel = 1, u = nowU()) {
+  const decay = val('decay', u), bright = val('bright', u), mallet = val('mallet', u);
+  const f0 = mtof(midi, val('a4', u));
   const P = PRESETS[S.preset] || PRESETS.marimba;
-  const dec = clamp(S.decay * Math.pow(262 / f0, 0.45), 0.04, 8);
+  const dec = clamp(decay * Math.pow(262 / f0, 0.45), 0.04, 8);
   const out = actx.createGain();
   out.gain.value = vel;
   out.connect(dest);
@@ -709,7 +1022,7 @@ function playVoice(t, midi, dest, vel = 1) {
   for (const [ratio, amp, dm] of P.partials) {
     const f = f0 * ratio;
     if (f > 16000) continue;
-    const a = ratio === 1 ? amp : amp * S.bright * 2;
+    const a = ratio === 1 ? amp : amp * bright * 2;
     if (a < 0.003) continue;
     const d = Math.max(0.025, dec * dm);
     const o = actx.createOscillator();
@@ -723,18 +1036,18 @@ function playVoice(t, midi, dest, vel = 1) {
     o.stop(t + atk + d + 0.02);
     if (t + d > end) { end = t + d; last = o; }
   }
-  if (S.mallet > 0.01) {
+  if (mallet > 0.01) {
     const src = actx.createBufferSource();
     src.buffer = noiseBuf;
     const bp = actx.createBiquadFilter();
     bp.type = 'bandpass';
-    bp.frequency.value = clamp(f0 * (2 + S.mallet * 6), 400, 9000);
+    bp.frequency.value = clamp(f0 * (2 + mallet * 6), 400, 9000);
     bp.Q.value = 0.9;
     const g = actx.createGain();
-    const peak = S.mallet * S.mallet * 0.7;
+    const peak = mallet * mallet * 0.7;
     g.gain.setValueAtTime(0, t);
     g.gain.linearRampToValueAtTime(peak, t + 0.0008);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.008 + (1 - S.mallet) * 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.008 + (1 - mallet) * 0.02);
     src.connect(bp).connect(g).connect(out);
     src.start(t, Math.random() * 0.9, 0.05);
   }
@@ -751,6 +1064,7 @@ function panFor(i) {
 }
 
 function newSession() {
+  midiPanic();
   if (session) {
     const old = session;
     old.bus.gain.setTargetAtTime(0, actx.currentTime, 0.012);
@@ -783,6 +1097,7 @@ function schedule() {
   const now = actx.currentTime;
   const horizon = now + LOOKAHEAD;
   const r = S.rhythm, L = r.length;
+  const clock = midiLive() ? midiClock() : null;
   for (let i = 0; i < counts.length; i++) {
     const dt = T / counts[i];
     // Beat times are computed absolutely (k * dt) so no drift accumulates.
@@ -791,13 +1106,25 @@ function schedule() {
       if (S.stopAtEnd && nextK[i] > counts[i] * stopCycle) break;
       const t = t0 + nextK[i] * dt;
       if (t > horizon) break;
-      const step = r[nextK[i] % L];
-      const vel = step ? stepGain(step) * fadeGain(nextK[i]) : 0;
-      if (t >= now - 0.005 && vel > 0.003) playVoice(Math.max(t, now), transpose(notes[i], shiftAt(nextK[i])), session.nodes[i].g, vel);
+      const kl = localK(i, nextK[i]), u = when(i, kl);
+      const step = r[kl % L];
+      const vel = step ? stepGain(step, u) * fadeGain(i, nextK[i]) : 0;
+      if (t >= now - 0.005 && vel > 0.003) {
+        const note = transpose(notes[i], shiftAt(i, nextK[i]));
+        if (!clock || MIDI.internal) playVoice(Math.max(t, now), note, session.nodes[i].g, vel, u);
+        if (clock && audible(i)) sendMidiNote(i, Math.max(t, now), note, vel, u, clock, dt);
+      }
       nextK[i]++;
     }
   }
+  applyLiveParams(mod((now - t0) / T, spanCycles));
   if (S.stopAtEnd && now >= t0 + stopCycle * T + 0.05) finish();
+}
+// Volume and reverb act on the whole mix, so they follow their curves continuously.
+function applyLiveParams(u) {
+  if (!actx) return;
+  if (isMod('volume') || master.gain.value !== S.volume) master.gain.setTargetAtTime(val('volume', u), actx.currentTime, 0.05);
+  if (isMod('reverb') || wet.gain.value !== S.reverb * 0.9) wet.gain.setTargetAtTime(val('reverb', u) * 0.9, actx.currentTime, 0.05);
 }
 
 // Reached the final sync: let the last notes ring out, then rewind to the start.
@@ -836,6 +1163,7 @@ function setPlayLabels() {
 }
 function pause() {
   if (!playing) return;
+  midiPanic();
   pausedAt = Math.max(0, elapsed());
   playing = false;
   if (session) { session.bus.gain.setTargetAtTime(0, actx.currentTime, 0.03); const old = session; setTimeout(() => old.bus.disconnect(), 500); session = null; }
@@ -854,18 +1182,166 @@ function audition(i) {
   const pan = actx.createStereoPanner();
   pan.pan.value = panFor(i);
   g.connect(pan).connect(master);
-  playVoice(actx.currentTime + 0.01, notes[i], g);
+  playVoice(actx.currentTime + 0.01, notes[i], g, 1, nowU());
   setTimeout(() => pan.disconnect(), 8000);
 }
+
+// ---------- MIDI output ----------
+// Machine-specific, so kept apart from S (not in saved setups or share links).
+const MIDI_KEY = 'phase-pulses-midi-v1';
+const MIDI = Object.assign({ enabled: 0, mode: 'part', ports: ['', '', ''], ch: 1, gate: 120, internal: 1, bend: 0, range: 2 },
+  readJSON(MIDI_KEY) || {});
+let midiAccess = null;
+const saveMidi = () => writeJSON(MIDI_KEY, MIDI);
+const midiOutputs = () => (midiAccess ? [...midiAccess.outputs.values()] : []);
+const midiOut = name => midiOutputs().find(o => o.name === name && o.state !== 'disconnected');
+const midiPortsNeeded = () => (MIDI.mode === 'single' ? 1 : Math.max(1, Math.ceil(counts.length / 16)));
+const midiLive = () => !!(midiAccess && MIDI.enabled);
+
+// Where part i goes: in per-part mode, 16 parts per port (parts 17–32 on the second port…).
+// If that port isn't chosen, it wraps onto the first port and shares channels.
+function midiRoute(i) {
+  if (!midiLive()) return null;
+  if (MIDI.mode === 'single') { const out = midiOut(MIDI.ports[0]); return out ? { out, ch: MIDI.ch - 1 } : null; }
+  const out = midiOut(MIDI.ports[Math.floor(i / 16)]) || midiOut(MIDI.ports[0]);
+  return out ? { out, ch: i % 16 } : null;
+}
+async function enableMidi() {
+  if (!navigator.requestMIDIAccess) {
+    $('midi-status').textContent = 'This browser has no Web MIDI. Use Chrome, Edge or Firefox.';
+    return;
+  }
+  try {
+    midiAccess = await navigator.requestMIDIAccess();
+    midiAccess.onstatechange = renderMidi;
+    MIDI.enabled = 1;
+  } catch (e) {
+    MIDI.enabled = 0;
+    $('midi-status').textContent = 'MIDI access was blocked. Allow it in the browser\'s site settings and try again.';
+  }
+  saveMidi();
+  renderMidi();
+}
+// Audio-clock time → performance.now() time, which is what MIDI timestamps use.
+function midiClock() {
+  const ts = actx.getOutputTimestamp ? actx.getOutputTimestamp() : null;
+  if (ts && ts.performanceTime) return { perf: ts.performanceTime, ctx: ts.contextTime };
+  return { perf: performance.now(), ctx: actx.currentTime };
+}
+function sendMidiNote(i, t, midi, vel, u, clock, beatSecs) {
+  const route = midiRoute(i);
+  if (!route) return;
+  const { out, ch } = route;
+  const when = clock.perf + (t - clock.ctx) * 1000;
+  const gate = Math.min(MIDI.gate, beatSecs * 1000 * 0.9);
+  let note = midi;
+  if (MIDI.bend && MIDI.mode === 'part') {
+    // nearest key plus a bend for the leftover cents (tuning tables and A4)
+    const exact = 69 + 12 * Math.log2(mtof(midi, val('a4', u)) / 440);
+    note = Math.round(exact);
+    const amount = clamp((exact - note) / MIDI.range, -1, 1);
+    const b = clamp(Math.round(8192 + amount * 8191), 0, 16383);
+    out.send([0xE0 | ch, b & 127, b >> 7], when - 1);
+  }
+  note = clamp(note, 0, 127);
+  const v = clamp(Math.round(90 * Math.sqrt(vel)), 1, 127);
+  out.send([0x90 | ch, note, v], when);
+  out.send([0x80 | ch, note, 0], when + gate);
+}
+// Stop everything on the ports in use (pause, seek, restart).
+function midiPanic() {
+  if (!midiLive()) return;
+  const used = new Set();
+  counts.forEach((_, i) => { const r = midiRoute(i); if (r) used.add(r.out); });
+  for (const out of used) {
+    for (let ch = 0; ch < 16; ch++) {
+      const msgs = [[0xB0 | ch, 123, 0], [0xE0 | ch, 0, 64]];   // all notes off, centre pitch bend
+      msgs.forEach(m => out.send(m));
+      setTimeout(() => msgs.forEach(m => { try { out.send(m); } catch (e) {} }), LOOKAHEAD * 1000 + MIDI.gate + 50);
+    }
+  }
+}
+function renderMidi() {
+  const live = midiLive();
+  $('midi-enable').textContent = live ? 'MIDI on' : 'Enable MIDI';
+  $('midi-enable').classList.toggle('primary', live);
+  $('midi-body').hidden = !live;
+  if (!live) return;
+  const outs = midiOutputs();
+  $('midi-status').textContent = outs.length ? `${outs.length} output${outs.length > 1 ? 's' : ''} found` : 'No MIDI outputs found. On a Mac, turn on the IAC Driver in Audio MIDI Setup.';
+  const need = midiPortsNeeded();
+  const opts = sel => '<option value="">(none)</option>' +
+    outs.map(o => `<option${o.name === sel ? ' selected' : ''}>${o.name.replace(/</g, '&lt;')}</option>`).join('');
+  $('midi-ports').innerHTML = Array.from({ length: Math.min(need, 3) }, (_, p) =>
+    `<div class="field"><label>${need > 1 ? `Port ${p + 1} (parts ${p * 16 + 1}–${Math.min(counts.length, p * 16 + 16)})` : 'Port'}</label>
+     <select data-port="${p}">${opts(MIDI.ports[p])}</select></div>`).join('');
+  $('midi-mode').value = MIDI.mode;
+  $('midi-ch').innerHTML = Array.from({ length: 16 }, (_, c) => `<option value="${c + 1}">${c + 1}</option>`).join('');
+  $('midi-ch').value = MIDI.ch;
+  $('midi-gate').value = MIDI.gate;
+  $('midi-internal').value = MIDI.internal;
+  $('midi-bend').value = MIDI.bend;
+  $('midi-range').value = MIDI.range;
+  $('f-midi-ch').classList.toggle('hidden', MIDI.mode === 'part');
+  $('f-midi-bend').classList.toggle('hidden', MIDI.mode !== 'part');
+  $('f-midi-range').classList.toggle('hidden', MIDI.mode !== 'part' || !MIDI.bend);
+  // describe the routing
+  const lines = [];
+  if (MIDI.mode === 'single') {
+    lines.push(MIDI.ports[0] ? `All parts → ${MIDI.ports[0]}, channel ${MIDI.ch}.` : 'Choose a port.');
+  } else {
+    for (let p = 0; p < need; p++) {
+      const a = p * 16 + 1, b = Math.min(counts.length, p * 16 + 16);
+      const port = MIDI.ports[p] && midiOut(MIDI.ports[p]) ? MIDI.ports[p] : null;
+      lines.push(port ? `Parts ${a}–${b} → ${port}, channels 1–${b - a + 1}.`
+        : p === 0 ? 'Choose a port.' : `Parts ${a}–${b} have no port of their own, so they share channels on port 1 with parts ${a - p * 16}–${b - p * 16}.`);
+    }
+  }
+  if (MIDI.mode === 'part' && MIDI.bend) lines.push(`Set each instrument's pitch-bend range to ±${MIDI.range} semitones.`);
+  $('midi-summary').innerHTML = lines.join('<br>');
+}
+$('midi-enable').onclick = () => {
+  if (midiLive()) { midiPanic(); MIDI.enabled = 0; saveMidi(); renderMidi(); $('midi-status').textContent = 'MIDI off'; }
+  else enableMidi();
+};
+// Plain middle C on part 1's port/channel, no pitch bend, to check the connection and octave naming.
+$('midi-test').onclick = () => {
+  const route = midiRoute(0);
+  if (!route) { $('midi-test-msg').textContent = 'Choose a port first.'; return; }
+  const { out, ch } = route, t = performance.now();
+  out.send([0xE0 | ch, 0, 64], t);
+  out.send([0x90 | ch, 60, 100], t + 1);
+  out.send([0x80 | ch, 60, 0], t + 600);
+  $('midi-test-msg').textContent = ` Sent middle C (MIDI note 60) on ${out.name}, channel ${ch + 1}. This page calls it C4; Logic calls it C3.`;
+};
+$('midi-ports').addEventListener('change', ev => {
+  const sel = ev.target.closest('[data-port]');
+  if (!sel) return;
+  midiPanic();
+  MIDI.ports[+sel.dataset.port] = sel.value;
+  saveMidi(); renderMidi();
+});
+const midiSetting = (id, key, parse) => $(id).addEventListener('change', () => {
+  midiPanic(); MIDI[key] = parse($(id).value); saveMidi(); renderMidi();
+});
+midiSetting('midi-mode', 'mode', String);
+midiSetting('midi-ch', 'ch', v => clamp(+v || 1, 1, 16));
+midiSetting('midi-gate', 'gate', v => clamp(Math.round(+v) || 120, 5, 5000));
+midiSetting('midi-internal', 'internal', Number);
+midiSetting('midi-bend', 'bend', Number);
+midiSetting('midi-range', 'range', v => clamp(Math.round(+v) || 2, 1, 48));
 
 // ---------- Rebuild on changes ----------
 function rebuildStructure() {
   const oldT = T, oldE = elapsed(), oldCounts = counts.join();
   offsets = computeOffsets();
   period = patternPeriod(S.rhythm);
-  // everything that repeats in each part's own beats: the rhythm and (if on) the fade
-  cyclePeriod = lcm(lcm(period, S.fadeOn ? Math.max(2, Math.round(S.fadeBeats)) : 1), shiftPeriod());
-  spanCycles = fullCycles(cyclePeriod, offsets);
+  compileMods();
+  const fadeMod = S.fadeOn && isMod('fadeBeats');
+  const shiftMod = S.shiftOn && isMod('shiftBeats') && patternPeriod(shiftList()) > 1;
+  // everything that repeats in each part's own beats: the rhythm, fade and note changes
+  cyclePeriod = lcm(lcm(period, S.fadeOn && !fadeMod ? Math.max(2, Math.round(S.fadeBeats)) : 1), shiftMod ? 1 : shiftPeriod());
+  spanCycles = computeSpan(fadeMod, shiftMod);
   if (S.lenMode === 'full') S.N = S.bpm * S.minutes / spanCycles;
   S.N = Math.max(1, Math.round(S.N));
   $('N').value = S.N;
@@ -873,7 +1349,11 @@ function rebuildStructure() {
   offsets = computeOffsets();
   counts = offsets.map(o => S.N + o);
   notes = computeNotes(counts.length);
+  Gfade = fadeMod ? buildIntegral('fadeBeats') : null;
+  Gshift = shiftMod ? buildIntegral('shiftBeats') : null;
   alignment = computeAlignment();
+  renderMods();
+  renderMidi();
   renderTable();
   renderSummaries();
   renderRhythm();
@@ -887,6 +1367,21 @@ function rebuildStructure() {
   else pausedAt = Math.max(0, e);
   save();
 }
+// How many pulse cycles one run of the process lasts. Always a whole number, so it
+// always ends on a pulse sync.
+function computeSpan(fadeMod, shiftMod) {
+  if (S.endMode === 'cycles') { spanReason = 'set'; return clamp(Math.round(S.endCycles) || 1, 1, 100000); }
+  if (!fadeMod && !shiftMod) { spanReason = 'sync'; return fullCycles(cyclePeriod, offsets); }
+  const slowest = S.N + Math.min(...offsets);
+  const ends = [fadeMod && 'fadeBeats', shiftMod && 'shiftBeats'].filter(Boolean).map(k => {
+    const f = compiled[k];
+    return f.end == null ? null : f.perPart ? f.end * S.N / slowest : f.end;
+  });
+  if (ends.every(e => e != null)) { spanReason = 'curve'; return Math.max(1, Math.ceil(Math.max(...ends) - 1e-9)); }
+  spanReason = 'periodic';
+  return clamp(Math.round(S.endCycles) || 1, 1, 100000);
+}
+
 function rebuildNotes() {
   notes = computeNotes(counts.length);
   renderTable();
@@ -895,9 +1390,16 @@ function rebuildNotes() {
 
 function renderSummaries() {
   const bpms = counts.map(c => c * 60 / T);
+  const span = `<b class="mono">${fmtTime(T * spanCycles)}</b> (${spanCycles} cycle${spanCycles > 1 ? 's' : ''})`;
+  const why = {
+    sync: spanCycles > 1 ? `; counting rhythm, fades and note changes, the whole process takes ${span}` : '',
+    curve: `; the process runs until the first pulse sync after its curves finish: ${span}`,
+    periodic: `; lengths that keep changing never exactly repeat, so the process runs a set ${span}`,
+    set: `; the process runs a set ${span}, ending on a pulse sync`,
+  }[spanReason];
+  $('f-endCycles').classList.toggle('hidden', !(S.endMode === 'cycles' || spanReason === 'periodic'));
   $('timing-summary').innerHTML =
-    `Pulses realign every <b class="mono">${fmtTime(T)}</b>` +
-    (spanCycles > 1 ? `; counting rhythm, fades and note changes, the whole process takes <b class="mono">${fmtTime(T * spanCycles)}</b> (${spanCycles} cycles)` : '') +
+    `Pulses realign every <b class="mono">${fmtTime(T)}</b>` + why +
     `${Math.abs(T * (S.lenMode === 'full' ? spanCycles : 1) - S.minutes * 60) > 0.01 ? ' (rounded to whole beats)' : ''}. ` +
     `Parts range <b class="mono">${Math.min(...bpms).toFixed(2)}</b> → <b class="mono">${Math.max(...bpms).toFixed(2)}</b> BPM.`;
   const list = offsets.slice(0, 12).join(', ') + (offsets.length > 12 ? ', …' : '');
@@ -918,19 +1420,122 @@ function renderRhythm() {
       (spanCycles > 1 ? `. Full realignment takes ${spanCycles} pulse cycles (${fmtTime(T * spanCycles)}).`
                       : '. Parts drift by whole rhythm repeats, so the length is unchanged.');
   const F = Math.max(2, Math.round(S.fadeBeats));
-  $('fade-summary').innerHTML = !S.fadeOn
+  $('fade-summary').innerHTML = S.fadeOn && Gfade
+    ? `The fade length changes over time (see Changes over time), so the fades drift apart faster when they're short and slower when they're long.`
+    : !S.fadeOn
     ? 'Each part swells and fades over a fixed number of its own beats, so the fades drift apart like the pulses.'
     : `One fade lasts ${F} beats (${fmtTime(F * T / counts[0])} for part 1). After each pulse cycle, a part's fade has slipped by its offset in beats; ` +
       `everything realigns after <b class="mono">${spanCycles}</b> cycles (${fmtTime(T * spanCycles)}).`;
 }
 function renderShift() {
   const seq = shiftList(), M = Math.max(1, Math.round(S.shiftBeats));
-  const unit = S.shiftUnit === 'semi' ? 'semitones' : 'scale steps';
+  const unit = S.shiftUnit === 'semi' ? 'semitones'
+    : S.pitchMode === 'interval' ? `steps of ${Math.round(S.interval)} semitones`
+    : S.pitchMode === 'custom' ? 'steps along your note list' : 'scale steps';
   $('shift-summary').innerHTML = !S.shiftOn
     ? 'Every so many of its own beats, each part moves to the next transposition in the list.'
     : `Each part moves through ${seq.map(v => (v > 0 ? '+' : '') + v).join(', ')} ${unit}, changing every ${M} beats ` +
       `(one round = ${M * seq.length} beats). Everything realigns after <b class="mono">${spanCycles}</b> cycles (${fmtTime(T * spanCycles)}).`;
 }
+function renderMods() {
+  const keys = Object.keys(S.mods).filter(k => MODS[k]);
+  const opt = (v, cur, label) => `<option value="${v}"${v === cur ? ' selected' : ''}>${label}</option>`;
+  $('mod-rows').innerHTML = keys.map((k, ci) => {
+    const m = S.mods[k];
+    const body = m.mode === 'lfo'
+      ? `<select data-f="shape">${opt('sine', m.shape, 'Sine')}${opt('tri', m.shape, 'Triangle')}</select>
+         <label>From <input data-f="lo" type="number" step="any" value="${m.lo}"></label>
+         <label>To <input data-f="hi" type="number" step="any" value="${m.hi}"></label>
+         <label>Period <input data-f="period" type="number" step="any" min="0.01" value="${m.period}"> cycles</label>`
+      : `<label class="grow">Points <input data-f="points" type="text" value="${String(m.points).replace(/"/g, '&quot;')}" placeholder="cycle value, cycle value, …"></label>
+         <select data-f="curve">${opt('lin', m.curve, 'Linear')}${opt('exp', m.curve, 'Exponential')}</select>
+         <label><input type="checkbox" data-f="loop"${m.loop ? ' checked' : ''}> Loop</label>`;
+    const inactive = (k === 'fadeBeats' && !S.fadeOn) || (k === 'shiftBeats' && !S.shiftOn);
+    return `<div class="mod-row" data-key="${k}">
+      <span class="mod-swatch" style="background:${MOD_COLORS[ci % MOD_COLORS.length]}"></span>
+      <b class="mod-name">${MODS[k].label}${inactive ? ' <span class="muted small">(turned off)</span>' : ''}</b>
+      <select data-f="mode">${opt('env', m.mode, 'Envelope')}${opt('lfo', m.mode, 'Wave')}</select>
+      ${MODS[k].global ? '<span class="small muted">shared clock (whole mix)</span>'
+        : `<select data-f="clock" title="Shared: every part reads the same value at the same moment. Per part: each part reads the curve by its own beat count, so faster parts run ahead.">${opt('shared', m.clock || 'shared', 'Shared clock')}${opt('part', m.clock || 'shared', 'Each part’s own beats')}</select>`}
+      ${body}
+      <button type="button" class="toggle" data-f="remove">Remove</button>
+    </div>`;
+  }).join('');
+  $('mod-add').innerHTML = '<option value="">Add a parameter…</option>' +
+    Object.entries(MODS).filter(([k]) => !S.mods[k]).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
+  $('mod-note').innerHTML = keys.length
+    ? `Times are in pulse cycles (1 cycle = ${fmtTime(T)}). With "Each part’s own beats", a part reads the curve at (its beats so far ÷ ${S.N}), so faster parts run ahead and the values drift apart; the graph shows part 1's curve. Envelope points are <span class="mono">cycle value</span> pairs, e.g. <span class="mono">0 8, 3 32, 6 64</span>. A wave starts at "From" and reaches "To" half a period later.`
+    : 'Add a parameter to make it follow an envelope or a wave over the course of the process.';
+  $('mod-legend').innerHTML = keys.map((k, ci) =>
+    `<span style="color:${MOD_COLORS[ci % MOD_COLORS.length]}">— ${MODS[k].label}</span>`).join('');
+}
+function modsChanged(key) {
+  compileMods();
+  if (MODS[key].structural) rebuildStructure();
+  else { renderMods(); save(); }
+  if (actx) applyLiveParams(nowU());
+}
+function defaultMod(key) {
+  const spec = MODS[key], cur = S[key];
+  let from, to;
+  if (spec.structural) { from = Math.max(spec.min, Math.round(cur / 4)); to = cur; }
+  else if (key === 'a4') { from = cur; to = cur - 8; }
+  else { from = cur; to = clamp(cur * 2, spec.min, spec.max); if (Math.abs(to - cur) < 1e-6) to = +(cur / 2).toFixed(3); }
+  return { mode: 'env', points: `0 ${from}, 6 ${to}`, curve: 'lin', loop: 0, shape: 'sine', lo: from, hi: to, period: 2, clock: 'shared' };
+}
+$('mod-add').addEventListener('change', () => {
+  const key = $('mod-add').value;
+  if (!MODS[key]) return;
+  S.mods[key] = defaultMod(key);
+  modsChanged(key);
+});
+$('mod-rows').addEventListener('change', ev => {
+  const el = ev.target.closest('[data-f]'), row = ev.target.closest('[data-key]');
+  if (!el || !row) return;
+  const key = row.dataset.key, f = el.dataset.f, m = S.mods[key];
+  if (f === 'loop') m.loop = el.checked ? 1 : 0;
+  else if (f === 'lo' || f === 'hi' || f === 'period') m[f] = NUM(el.value);
+  else m[f] = el.value;
+  modsChanged(key);
+});
+$('mod-rows').addEventListener('click', ev => {
+  const b = ev.target.closest('[data-f="remove"]');
+  if (!b) return;
+  const key = b.closest('[data-key]').dataset.key;
+  delete S.mods[key];
+  modsChanged(key);
+});
+// Controls that follow a curve are locked and show their current value. With a per-part
+// clock each part is at its own point on the curve, so number fields show the current
+// range across parts (e.g. "12–15"); sliders can only show one value, so they show part 1's.
+function syncModControls(u) {
+  for (const key of Object.keys(MODS)) {
+    const el = $(key), f = compiled[key], on = !!f;
+    el.dataset.origType = el.dataset.origType || el.type;
+    if (el.classList.contains('modded') !== on) {
+      el.classList.toggle('modded', on);
+      el.disabled = on;
+      if (!on) el.value = S[key];
+    }
+    const spread = on && f.perPart && el.dataset.origType === 'number' && counts.length > 1;
+    if (el.type !== (spread ? 'text' : el.dataset.origType)) el.type = spread ? 'text' : el.dataset.origType;
+    if (!on) { el.title = ''; continue; }
+    const show = v => (MODS[key].int ? String(Math.round(v)) : String(+v.toFixed(key === 'a4' ? 1 : 3)));
+    if (f.perPart) {
+      const vals = counts.map(c => f(u * c / S.N));
+      // the spread is often under one beat, so whole numbers would hide it
+      const fmt = v => (MODS[key].int ? v.toFixed(1) : show(v));
+      const lo = fmt(Math.min(...vals)), hi = fmt(Math.max(...vals));
+      el.value = spread ? (lo === hi ? lo : `${lo}–${hi}`) : show(vals[0]);
+      el.title = spread ? 'Current range across parts (each follows the curve by its own beats)'
+                        : "Part 1's value; other parts are at their own points on the curve";
+    } else {
+      el.value = show(f(u));
+      el.title = 'Follows its curve in Changes over time';
+    }
+  }
+}
+
 function rhythmChanged() {
   if (patternPeriod(S.rhythm) !== period) rebuildStructure();
   renderRhythm();
@@ -986,6 +1591,8 @@ $('clearMutes').onclick = () => { S.mute = {}; S.solo = {}; renderTable(); updat
 function fillSelects() {
   $('key').innerHTML = NOTE_NAMES.map((n, i) => `<option value="${i}">${n}</option>`).join('');
   $('octave').innerHTML = [1, 2, 3, 4, 5, 6].map(o => `<option value="${o}">Oct ${o}</option>`).join('');
+  $('degStep').innerHTML = Array.from({ length: 12 }, (_, i) => i + 1).map(n =>
+    `<option value="${n}">${n === 1 ? 'Every degree' : n === 2 ? 'Every 2nd degree (thirds)' : `Every ${n}th degree`.replace('3th', '3rd')}</option>`).join('');
   $('scale').innerHTML = Object.entries(SCALES).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
   $('gridMax').innerHTML = Array.from({ length: 12 }, (_, i) => i + 1).map(h =>
     `<option value="${h}">${h === 1 ? 'Whole beats only' : `Up to 1/${h} beat`}</option>`).join('');
@@ -1006,14 +1613,21 @@ function syncVisibility() {
   $('f-rand').classList.toggle('hidden', S.pattern !== 'random');
   $('f-custom').classList.toggle('hidden', S.pattern !== 'custom');
   $('parts').disabled = S.pattern === 'custom';
-  $('f-cscale').classList.toggle('hidden', S.scale !== 'custom');
+  const pm = S.pitchMode;
+  for (const id of ['f-scale', 'f-startDeg', 'f-degStep']) $(id).classList.toggle('hidden', pm !== 'scale');
+  $('f-cscale').classList.toggle('hidden', pm !== 'scale' || S.scale !== 'custom');
+  $('f-interval').classList.toggle('hidden', pm !== 'interval');
+  for (const id of ['f-notes', 'f-notes-help']) $(id).classList.toggle('hidden', pm !== 'custom');
+  // in custom mode the key only sets the root for non-equal tunings
+  $('key-label').textContent = pm === 'scale' ? 'Key' : pm === 'interval' ? 'Lowest note' : 'Tuning root';
+  $('octave').classList.toggle('hidden', pm === 'custom');
 }
 function writeControls() {
   for (const id of ['bpm', 'minutes', 'N', 'parts', 'pattern', 'mult', 'randRange', 'customText',
     'key', 'octave', 'scale', 'customScale', 'degStep', 'order', 'preset',
     'decay', 'bright', 'mallet', 'reverb', 'spread', 'volume', 'viewSecs', 'flip', 'stopAtEnd', 'gridMax', 'lenMode', 'accent',
     'fadeOn', 'fadeBeats', 'fadeShape', 'fadeStart', 'fadeDepth', 'tuning', 'a4',
-    'shiftOn', 'shiftBeats', 'shiftSeq', 'shiftUnit']) {
+    'shiftOn', 'shiftBeats', 'shiftSeq', 'shiftUnit', 'endMode', 'endCycles', 'pitchMode', 'interval', 'customNotes']) {
     $(id).value = S[id];
   }
   if (S.pattern === 'custom') $('parts').value = computeOffsets().length;
@@ -1054,6 +1668,15 @@ on('customScale', 'change', pitchChange('customScale', String));
 on('startDeg', 'change', pitchChange('startDeg', Number));
 on('degStep', 'change', pitchChange('degStep', Number));
 on('order', 'change', pitchChange('order', String));
+on('pitchMode', 'change', v => { pitchChange('pitchMode', String)(v); renderShift(); });
+on('interval', 'change', v => { pitchChange('interval', x => clamp(Math.round(NUM(x)) || 7, -24, 24))(v); $('interval').value = S.interval; renderShift(); });
+on('customNotes', 'change', v => {
+  const bad = String(v).split(/[\s,]+/).filter(t => t && parseNote(t) == null);
+  pitchChange('customNotes', String)(v);
+  $('f-notes-help').textContent = bad.length
+    ? `Couldn't read: ${bad.join(', ')}. Use names like C3, F#4, Bb2 or MIDI numbers.`
+    : 'Note names (C3, F#4, Bb2) or MIDI numbers (60 = C4), one per part. With more parts than notes, the list repeats higher up.';
+});
 
 on('preset', 'change', v => {
   S.preset = v;
@@ -1106,6 +1729,8 @@ on('shiftOn', 'change', v => { S.shiftOn = +v; rebuildStructure(); });
 on('shiftBeats', 'change', v => { S.shiftBeats = clamp(Math.round(NUM(v)) || 20, 1, 4096); writeControls(); rebuildStructure(); });
 on('shiftSeq', 'change', v => { S.shiftSeq = v; rebuildStructure(); });
 on('shiftUnit', 'change', v => { S.shiftUnit = v; renderShift(); save(); });
+on('endMode', 'change', v => { S.endMode = v; rebuildStructure(); });
+on('endCycles', 'change', v => { S.endCycles = clamp(Math.round(NUM(v)) || 6, 1, 100000); writeControls(); rebuildStructure(); });
 on('a4', 'change', v => { S.a4 = clamp(NUM(v) || 440, 380, 480); writeControls(); save(); });
 on('gridMax', 'change', v => { S.gridMax = +v; alignment = computeAlignment(); save(); });
 on('stopAtEnd', 'change', v => {
@@ -1227,9 +1852,9 @@ function drawLanes(e) {
       const tb = k * dt;
       const age = e - tb;
       const x = xOf(tb);
-      const hy = cy - clamp(shiftAt(k), -3, 3) * laneH * 0.12;   // transposed notes sit higher/lower
+      const hy = cy - clamp(shiftAt(i, k), -3, 3) * laneH * 0.12;   // transposed notes sit higher/lower
       let alpha, rad = r;
-      const stepV = rhy[mod(k, RL)];
+      const stepV = rhy[localK(i, k) % RL];
       if (!stepV) {
         // silent step: a faint tick so the underlying pulse stays visible
         ctx.fillStyle = `hsla(${hue},40%,60%,${muted ? 0.08 : 0.22})`;
@@ -1237,7 +1862,7 @@ function drawLanes(e) {
         continue;
       }
       // size follows accent, brightness follows the fade
-      const fg = fadeGain(k);
+      const fg = fadeGain(i, k);
       rad = r * (stepV === 2 ? 1.3 : 1) * (0.55 + 0.45 * Math.min(1, fg));
       const dim = 0.2 + 0.8 * Math.min(1, fg);
       if (age < 0) {
@@ -1274,10 +1899,10 @@ function drawLanes(e) {
     const dt = T / counts[i];
     const kNow = Math.floor(e / dt);
     const age = e - kNow * dt;
-    const flash = playing && S.rhythm[mod(kNow, S.rhythm.length)] ? Math.max(0, 1 - age / 0.2) : 0;
+    const flash = playing && S.rhythm[localK(i, kNow) % S.rhythm.length] ? Math.max(0, 1 - age / 0.2) : 0;
     const muted = !audible(i);
     ctx.fillStyle = partColor(i, n, muted ? 0.3 : 0.55 + flash * 0.45, 62 + flash * 25);
-    ctx.fillText(noteName(transpose(notes[i], shiftAt(Math.max(0, kNow)))), 8, cy);
+    ctx.fillText(noteName(transpose(notes[i], shiftAt(i, kNow))), 8, cy);
   }
   ctx.textBaseline = 'alphabetic';
 }
@@ -1337,6 +1962,19 @@ function drawOverview(e) {
     area(envCache.pulse, grad, 'rgba(111,195,223,0.9)');
   }
 
+  // curves from Changes over time, each scaled to its own range
+  Object.keys(S.mods).filter(isMod).forEach((key, ci) => {
+    const N = Math.min(cols, 600), vals = [];
+    for (let j = 0; j <= N; j++) vals.push(val(key, j / N * spanCycles));
+    const lo = Math.min(...vals), hi = Math.max(...vals);
+    ctx.strokeStyle = MOD_COLORS[ci % MOD_COLORS.length]; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    vals.forEach((v, j) => {
+      const y = 4 + 6 + (plotH - 12) * (hi > lo ? 1 - (v - lo) / (hi - lo) : 0.5);
+      j ? ctx.lineTo(j / N * W, y) : ctx.moveTo(0, y);
+    });
+    ctx.stroke(); ctx.globalAlpha = 1;
+  });
   // pulse-sync markers, thinned so they stay at least ~8px apart
   const P = T * spanCycles;
   if (spanCycles > 1) {
@@ -1395,7 +2033,7 @@ function updateReadout(e) {
   const pos = mod(e, P);
   $('fs-prog').style.width = (pos / P * 100).toFixed(2) + '%';
   const multi = spanCycles > 1;
-  const endLabel = S.stopAtEnd ? 'Ends in' : (multi ? 'Full sync in' : 'Next sync');
+  const endLabel = S.stopAtEnd ? 'Ends in' : spanReason !== 'sync' ? 'Restarts in' : (multi ? 'Full sync in' : 'Next sync');
   const cycle = multi ? `${Math.floor(pos / T) + 1} / ${spanCycles}` : String(Math.floor(Math.max(0, e) / T) + 1);
   const vals = [
     `${fmtTime(pos)} / ${fmtTime(P)}`,
@@ -1414,12 +2052,15 @@ function updateReadout(e) {
   $('r-cycle').textContent = cyc;
 }
 
+let lastModSync = 0;
 function frame() {
   const e = visualElapsed();
   drawLanes(e);
   drawOverview(e);
   drawDial(e);
   updateReadout(e);
+  const nowMs = performance.now();
+  if (nowMs - lastModSync > 100) { lastModSync = nowMs; syncModControls(mod(e / T, spanCycles)); }
   requestAnimationFrame(frame);
 }
 
@@ -1431,12 +2072,76 @@ cvs.overview.addEventListener('click', ev => {
   seek(rep * P + frac * P);
 });
 
+// ---------- Setups UI ----------
+function setupMsg(text) { $('setup-msg').textContent = text; }
+function renderSetups(selected) {
+  const setups = loadSetups();
+  const names = Object.keys(setups).sort((a, b) => (setups[b].savedAt || 0) - (setups[a].savedAt || 0));
+  $('setup-list').innerHTML = names.length
+    ? names.map(n => `<option>${n.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</option>`).join('')
+    : '<option value="">No saved setups</option>';
+  if (selected && names.includes(selected)) $('setup-list').value = selected;
+  $('setup-load').disabled = $('setup-del').disabled = !names.length;
+}
+function applyConfig(cfg) {
+  for (const k of Object.keys(DEFAULTS)) S[k] = structuredClone(cfg[k]);
+  writeControls();
+  rebuildStructure();
+  renderRhythm();
+  updateMix();
+  if (actx) applyLiveParams(nowU());
+  save();
+}
+$('setup-save').onclick = () => {
+  const name = $('setup-name').value.trim();
+  if (!name) { setupMsg('Give the setup a name first.'); $('setup-name').focus(); return; }
+  const setups = loadSetups();
+  if (setups[name] && !confirm(`Replace the saved setup "${name}"?`)) return;
+  setups[name] = { savedAt: Date.now(), config: structuredClone(S) };
+  if (!writeJSON(SETUPS_KEY, setups)) { setupMsg('Could not save: this browser is blocking local storage.'); return; }
+  renderSetups(name);
+  setupMsg(`Saved "${name}" in this browser.`);
+};
+$('setup-name').addEventListener('keydown', ev => { if (ev.key === 'Enter') $('setup-save').click(); });
+$('setup-list').addEventListener('change', () => { $('setup-name').value = $('setup-list').value; });
+$('setup-load').onclick = () => {
+  const name = $('setup-list').value, entry = loadSetups()[name];
+  if (!entry) return;
+  applyConfig(sanitize(entry.config));
+  $('setup-name').value = name;
+  setupMsg(`Loaded "${name}".`);
+};
+$('setup-del').onclick = () => {
+  const name = $('setup-list').value, setups = loadSetups();
+  if (!setups[name] || !confirm(`Delete the saved setup "${name}"?`)) return;
+  delete setups[name];
+  writeJSON(SETUPS_KEY, setups);
+  renderSetups();
+  setupMsg(`Deleted "${name}".`);
+};
+$('setup-share').onclick = async () => {
+  const url = new URL(location.href);
+  url.search = '';
+  url.hash = '';
+  url.searchParams.set('s', encodeConfig(S));
+  const link = url.toString();
+  const box = $('share-url');
+  box.hidden = false;
+  box.value = link;
+  box.select();
+  try { await navigator.clipboard.writeText(link); setupMsg('Link copied. Anyone opening it gets exactly these settings.'); }
+  catch (e) { setupMsg('Copy the link above. Anyone opening it gets exactly these settings.'); }
+};
+
 // ---------- Boot ----------
 fillSelects();
 writeControls();
 rebuildStructure();
 sizeLanes();
 new MutationObserver(sizeLanes).observe($('parts-body'), { childList: true });
+renderSetups();
+if (MIDI.enabled) enableMidi(); else renderMidi();
+if (linkNotice) setupMsg(linkNotice);
 requestAnimationFrame(frame);
 })();
 </script>
