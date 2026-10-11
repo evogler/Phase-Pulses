@@ -387,12 +387,6 @@
     <div class="field"><label for="gridMax">Graph detail</label>
       <select id="gridMax"></select>
     </div>
-    <div class="field"><label for="flip">Direction</label>
-      <select id="flip">
-        <option value="0">Scroll left → right</option>
-        <option value="1">Scroll right → left</option>
-      </select>
-    </div>
     <div class="note">Space plays / pauses. Home resets. F toggles full screen. Click a colour dot in the parts table to audition that note.</div>
   </section>
 </div>
@@ -465,7 +459,7 @@ const DEFAULTS = {
   parts: 8, pattern: 'linear', mult: 1, customText: '0 1 3 7 12 20', randRange: 24, randSeed: 1,
   key: 0, octave: 3, scale: 'major', customScale: '0 2 5 7 9', startDeg: 1, degStep: 1, order: 'asc',
   preset: 'marimba', decay: 0.9, bright: 0.5, mallet: 0.45, reverb: 0.25, spread: 0.6, volume: 0.75,
-  viewSecs: 8, flip: 0, stopAtEnd: 0, gridMax: 4,
+  viewSecs: 8, stopAtEnd: 0, gridMax: 4,
   rhythm: [1], lenMode: 'pulse', accent: 0.5,
   shiftOn: 0, shiftBeats: 20, shiftSeq: '0 1 -1', shiftUnit: 'scale',
   fadeOn: 0, fadeBeats: 64, fadeShape: 'sine', fadeStart: 'loud', fadeDepth: 1,
@@ -727,6 +721,7 @@ function fullCycles(p, offs) {
 // ---------- Changes over time ----------
 // Times are in pulse cycles from the start of the process.
 const MODS = {
+  bpm:        { label: 'Tempo (slowest part, BPM)', min: 1, max: 600, global: true, tempo: true },
   fadeBeats:  { label: 'Fade length (beats)', min: 2, max: 4096, structural: true, int: true },
   shiftBeats: { label: 'Note step (beats)', min: 1, max: 4096, structural: true, int: true },
   fadeDepth:  { label: 'Fade depth', min: 0, max: 1 },
@@ -797,7 +792,84 @@ function val(key, u) {
   return f(typeof u === 'number' ? u : f.perPart ? u.p : u.s);
 }
 // Position in the process (cycles) for the current transport time.
-function nowU() { return mod(elapsed() / T, spanCycles); }
+function nowU() { return mod(uOf(elapsed()), spanCycles); }
+
+// ---------- Tempo map ----------
+// Beats live on the cycle axis u (beat k of part i is at u = k / counts[i]); the tempo only
+// decides how many seconds each stretch of u takes. Phase relationships are therefore
+// untouched by tempo changes: every sync happens at the same beat counts, just sooner or later.
+// When the tempo follows a curve, Wt = { axis, I }:
+//   axis 'cycles': the curve is laid out along cycles; I holds seconds on a grid of u
+//   axis 'time':   the curve is laid out along clock time (minutes); I holds u on a grid of seconds
+let Wt = null;
+const tempoByTime = () => isMod('bpm') && S.mods.bpm.axis === 'time';
+// Lowest tempo the curve ever reaches (envelope points or wave bounds).
+function tempoFloor() {
+  const m = S.mods.bpm;
+  const vals = m.mode === 'lfo' ? [+m.lo, +m.hi] : envPoints(m.points).map(p => p[1]);
+  return clamp(Math.min(...vals), MODS.bpm.min, MODS.bpm.max);
+}
+function buildTempo() {
+  if (!isMod('bpm')) return null;
+  const f = compiled.bpm, secsPerCycle = S.N * 60;
+  if (tempoByTime()) {
+    // du/dt = bpm(t) / (60 n): step through clock time until the run's cycles are covered
+    const estP = spanCycles * secsPerCycle / tempoFloor();
+    const dt = clamp(estP / 1e6, 0.01, 10);
+    const G = [0];
+    let u = 0, prev = f(0) / secsPerCycle;
+    for (let j = 1; u < spanCycles && j < 2.2e6; j++) {
+      const cur = f(j * dt / 60) / secsPerCycle;
+      u += (prev + cur) / 2 * dt;
+      G.push(u);
+      prev = cur;
+    }
+    return { axis: 'time', I: { G: Float64Array.from(G), res: 1 / dt } };
+  }
+  const res = clamp(Math.floor(2e6 / spanCycles), 4, 256), len = Math.ceil(spanCycles * res);
+  const G = new Float64Array(len + 1);
+  let prev = secsPerCycle / f(0);
+  for (let j = 1; j <= len; j++) {
+    const cur = secsPerCycle / f(j / res);
+    G[j] = G[j - 1] + (prev + cur) / (2 * res);
+    prev = cur;
+  }
+  return { axis: 'cycles', I: { G, res } };
+}
+// Cycles covered in the first `secs` seconds by a clock-time tempo curve (used before Wt exists).
+function cyclesAtSecs(secs) {
+  const f = compiled.bpm, steps = 2000, h = secs / steps;
+  let u = 0;
+  for (let j = 0; j < steps; j++) u += (f(j * h / 60) + f((j + 1) * h / 60)) / 2 * h / (S.N * 60);
+  return u;
+}
+function invInt(I, x) {
+  const G = I.G;
+  let lo = 0, hi = G.length - 1;
+  if (x <= 0) return 0;
+  if (x >= G[hi]) return hi / I.res;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (G[m] <= x) lo = m; else hi = m; }
+  return (lo + (x - G[lo]) / (G[hi] - G[lo])) / I.res;
+}
+// Within one run: cycle position w → seconds, and back.
+function timeIn(w) { return !Wt ? w * T : Wt.axis === 'time' ? invInt(Wt.I, w) : evalInt(Wt.I, w); }
+function uIn(x) { return !Wt ? x / T : Wt.axis === 'time' ? evalInt(Wt.I, x) : invInt(Wt.I, x); }
+// Seconds in one run of the process.
+function procSecs() { return timeIn(spanCycles); }
+// Cycle position u ↔ seconds since playback position 0 (runs repeat end to end).
+function timeOfU(u) {
+  const rep = Math.floor(u / spanCycles);
+  return rep * procSecs() + timeIn(u - rep * spanCycles);
+}
+function uOf(e) {
+  const P = procSecs(), rep = Math.floor(e / P);
+  return rep * spanCycles + uIn(e - rep * P);
+}
+// A curve's value at cycle position u; a clock-time tempo curve is read in minutes.
+function curveAt(key, u) {
+  if (key === 'bpm' && tempoByTime()) return compiled.bpm(timeIn(mod(u, spanCycles)) / 60);
+  return val(key, u);
+}
 
 // Running integral of 1 / value over the process, sampled on a grid and interpolated.
 function buildIntegral(key) {
@@ -955,7 +1027,7 @@ function computeAlignment() {
 let actx = null, master = null, wet = null, noiseBuf = null, comp = null;
 let session = null;           // { bus, nodes: [{g, pan}] }
 let playing = false, t0 = 0, pausedAt = 0, nextK = [];
-let stopCycle = 1;            // with stopAtEnd, playback ends at stopCycle * T
+let stopCycle = 1;            // with stopAtEnd, playback ends at cycle stopCycle
 let timer = null;
 
 function initAudio() {
@@ -1099,13 +1171,14 @@ function schedule() {
   const r = S.rhythm, L = r.length;
   const clock = midiLive() ? midiClock() : null;
   for (let i = 0; i < counts.length; i++) {
-    const dt = T / counts[i];
-    // Beat times are computed absolutely (k * dt) so no drift accumulates.
+    const n = counts[i];
+    // Beat times are computed absolutely (from k / n through the tempo map) so no drift accumulates.
     while (true) {
       // the final sync beat (k = counts * stopCycle) is played, nothing after it
-      if (S.stopAtEnd && nextK[i] > counts[i] * stopCycle) break;
-      const t = t0 + nextK[i] * dt;
+      if (S.stopAtEnd && nextK[i] > n * stopCycle) break;
+      const t = t0 + timeOfU(nextK[i] / n);
       if (t > horizon) break;
+      const dt = t0 + timeOfU((nextK[i] + 1) / n) - t;   // this beat's length, for MIDI note length
       const kl = localK(i, nextK[i]), u = when(i, kl);
       const step = r[kl % L];
       const vel = step ? stepGain(step, u) * fadeGain(i, nextK[i]) : 0;
@@ -1117,8 +1190,8 @@ function schedule() {
       nextK[i]++;
     }
   }
-  applyLiveParams(mod((now - t0) / T, spanCycles));
-  if (S.stopAtEnd && now >= t0 + stopCycle * T + 0.05) finish();
+  applyLiveParams(mod(uOf(now - t0), spanCycles));
+  if (S.stopAtEnd && now >= t0 + timeOfU(stopCycle) + 0.05) finish();
 }
 // Volume and reverb act on the whole mix, so they follow their curves continuously.
 function applyLiveParams(u) {
@@ -1147,8 +1220,9 @@ function visualElapsed() {
 
 function startPlayback() {
   t0 = actx.currentTime + 0.05 - pausedAt;
-  nextK = counts.map(n => Math.ceil(pausedAt * n / T - 1e-9));
-  stopCycle = (Math.floor(pausedAt / (T * spanCycles) + 1e-9) + 1) * spanCycles;
+  const u = uOf(pausedAt);
+  nextK = counts.map(n => Math.ceil(u * n - 1e-9));
+  stopCycle = (Math.floor(u / spanCycles + 1e-9) + 1) * spanCycles;
   newSession();
   playing = true;
 }
@@ -1333,7 +1407,7 @@ midiSetting('midi-range', 'range', v => clamp(Math.round(+v) || 2, 1, 48));
 
 // ---------- Rebuild on changes ----------
 function rebuildStructure() {
-  const oldT = T, oldE = elapsed(), oldCounts = counts.join();
+  const oldE = elapsed(), oldU = uOf(oldE), oldCounts = counts.join(), oldTempo = tempoSig();
   offsets = computeOffsets();
   period = patternPeriod(S.rhythm);
   compileMods();
@@ -1351,6 +1425,7 @@ function rebuildStructure() {
   notes = computeNotes(counts.length);
   Gfade = fadeMod ? buildIntegral('fadeBeats') : null;
   Gshift = shiftMod ? buildIntegral('shiftBeats') : null;
+  Wt = buildTempo();
   alignment = computeAlignment();
   renderMods();
   renderMidi();
@@ -1358,26 +1433,43 @@ function rebuildStructure() {
   renderSummaries();
   renderRhythm();
   renderShift();
-  // keep the same relative position in the cycle
-  const e = oldT > 0 ? oldE / oldT * T : 0;
-  if (playing && T === oldT && counts.join() === oldCounts) {
+  // keep the same position in the cycle (u), whatever that now means in seconds
+  const e = timeOfU(oldU);
+  if (playing && tempoSig() === oldTempo && counts.join() === oldCounts) {
     // timing untouched (e.g. only the rhythm's period changed): keep playing seamlessly
-    stopCycle = (Math.floor(Math.max(0, elapsed()) / (T * spanCycles)) + 1) * spanCycles;
+    stopCycle = (Math.floor(Math.max(0, uOf(elapsed())) / spanCycles) + 1) * spanCycles;
   } else if (playing) { pausedAt = Math.max(0, e); startPlayback(); }
   else pausedAt = Math.max(0, e);
   save();
 }
+// Changes here move beats in time, so playback has to be rescheduled.
+function tempoSig() { return [T, spanCycles, S.N, JSON.stringify(S.mods.bpm || null)].join('|'); }
 // How many pulse cycles one run of the process lasts. Always a whole number, so it
 // always ends on a pulse sync.
 function computeSpan(fadeMod, shiftMod) {
   if (S.endMode === 'cycles') { spanReason = 'set'; return clamp(Math.round(S.endCycles) || 1, 1, 100000); }
-  if (!fadeMod && !shiftMod) { spanReason = 'sync'; return fullCycles(cyclePeriod, offsets); }
   const slowest = S.N + Math.min(...offsets);
-  const ends = [fadeMod && 'fadeBeats', shiftMod && 'shiftBeats'].filter(Boolean).map(k => {
+  // where a curve finishes; with a per-part clock the slowest part gets there last
+  const endOf = k => {
     const f = compiled[k];
-    return f.end == null ? null : f.perPart ? f.end * S.N / slowest : f.end;
-  });
-  if (ends.every(e => e != null)) { spanReason = 'curve'; return Math.max(1, Math.ceil(Math.max(...ends) - 1e-9)); }
+    if (f.end == null) return null;
+    if (k === 'bpm' && tempoByTime()) return cyclesAtSecs(f.end * 60);
+    return f.perPart ? f.end * S.N / slowest : f.end;
+  };
+  // envelopes that finish (tempo, A4, sound…) should get to play out before a restart
+  const finishing = Object.keys(compiled)
+    .filter(k => !(k === 'fadeBeats' && !fadeMod) && !(k === 'shiftBeats' && !shiftMod))
+    .map(endOf).filter(e => e != null);
+  const curveEnd = finishing.length ? Math.max(...finishing) : 0;
+  if (!fadeMod && !shiftMod) {
+    const sync = fullCycles(cyclePeriod, offsets);
+    if (curveEnd <= sync) { spanReason = 'sync'; return sync; }
+    // run whole sync periods until the curves are done, so the restart is still a full sync
+    spanReason = 'curve';
+    return sync * Math.ceil(curveEnd / sync - 1e-9);
+  }
+  const ends = [fadeMod && 'fadeBeats', shiftMod && 'shiftBeats'].filter(Boolean).map(endOf);
+  if (ends.every(e => e != null)) { spanReason = 'curve'; return Math.max(1, Math.ceil(curveEnd - 1e-9)); }
   spanReason = 'periodic';
   return clamp(Math.round(S.endCycles) || 1, 1, 100000);
 }
@@ -1390,7 +1482,7 @@ function rebuildNotes() {
 
 function renderSummaries() {
   const bpms = counts.map(c => c * 60 / T);
-  const span = `<b class="mono">${fmtTime(T * spanCycles)}</b> (${spanCycles} cycle${spanCycles > 1 ? 's' : ''})`;
+  const span = `<b class="mono">${fmtTime(procSecs())}</b> (${spanCycles} cycle${spanCycles > 1 ? 's' : ''})`;
   const why = {
     sync: spanCycles > 1 ? `; counting rhythm, fades and note changes, the whole process takes ${span}` : '',
     curve: `; the process runs until the first pulse sync after its curves finish: ${span}`,
@@ -1399,7 +1491,7 @@ function renderSummaries() {
   }[spanReason];
   $('f-endCycles').classList.toggle('hidden', !(S.endMode === 'cycles' || spanReason === 'periodic'));
   $('timing-summary').innerHTML =
-    `Pulses realign every <b class="mono">${fmtTime(T)}</b>` + why +
+    (Wt ? 'Pulses realign every cycle; the tempo curve stretches and shrinks how long each takes' : `Pulses realign every <b class="mono">${fmtTime(T)}</b>`) + why +
     `${Math.abs(T * (S.lenMode === 'full' ? spanCycles : 1) - S.minutes * 60) > 0.01 ? ' (rounded to whole beats)' : ''}. ` +
     `Parts range <b class="mono">${Math.min(...bpms).toFixed(2)}</b> → <b class="mono">${Math.max(...bpms).toFixed(2)}</b> BPM.`;
   const list = offsets.slice(0, 12).join(', ') + (offsets.length > 12 ? ', …' : '');
@@ -1417,7 +1509,7 @@ function renderRhythm() {
     ? 'One step: every pulse plays. Click steps to cycle off / on / accent.'
     : `${on} of ${S.rhythm.length} steps sound${acc ? `, ${acc} accented` : ''}` +
       (period < S.rhythm.length ? ` (repeats every ${period})` : '') +
-      (spanCycles > 1 ? `. Full realignment takes ${spanCycles} pulse cycles (${fmtTime(T * spanCycles)}).`
+      (spanCycles > 1 ? `. Full realignment takes ${spanCycles} pulse cycles (${fmtTime(procSecs())}).`
                       : '. Parts drift by whole rhythm repeats, so the length is unchanged.');
   const F = Math.max(2, Math.round(S.fadeBeats));
   $('fade-summary').innerHTML = S.fadeOn && Gfade
@@ -1425,7 +1517,7 @@ function renderRhythm() {
     : !S.fadeOn
     ? 'Each part swells and fades over a fixed number of its own beats, so the fades drift apart like the pulses.'
     : `One fade lasts ${F} beats (${fmtTime(F * T / counts[0])} for part 1). After each pulse cycle, a part's fade has slipped by its offset in beats; ` +
-      `everything realigns after <b class="mono">${spanCycles}</b> cycles (${fmtTime(T * spanCycles)}).`;
+      `everything realigns after <b class="mono">${spanCycles}</b> cycles (${fmtTime(procSecs())}).`;
 }
 function renderShift() {
   const seq = shiftList(), M = Math.max(1, Math.round(S.shiftBeats));
@@ -1435,19 +1527,20 @@ function renderShift() {
   $('shift-summary').innerHTML = !S.shiftOn
     ? 'Every so many of its own beats, each part moves to the next transposition in the list.'
     : `Each part moves through ${seq.map(v => (v > 0 ? '+' : '') + v).join(', ')} ${unit}, changing every ${M} beats ` +
-      `(one round = ${M * seq.length} beats). Everything realigns after <b class="mono">${spanCycles}</b> cycles (${fmtTime(T * spanCycles)}).`;
+      `(one round = ${M * seq.length} beats). Everything realigns after <b class="mono">${spanCycles}</b> cycles (${fmtTime(procSecs())}).`;
 }
 function renderMods() {
   const keys = Object.keys(S.mods).filter(k => MODS[k]);
   const opt = (v, cur, label) => `<option value="${v}"${v === cur ? ' selected' : ''}>${label}</option>`;
   $('mod-rows').innerHTML = keys.map((k, ci) => {
     const m = S.mods[k];
+    const unit = k === 'bpm' && m.axis === 'time' ? 'minutes' : 'cycles';
     const body = m.mode === 'lfo'
       ? `<select data-f="shape">${opt('sine', m.shape, 'Sine')}${opt('tri', m.shape, 'Triangle')}</select>
          <label>From <input data-f="lo" type="number" step="any" value="${m.lo}"></label>
          <label>To <input data-f="hi" type="number" step="any" value="${m.hi}"></label>
-         <label>Period <input data-f="period" type="number" step="any" min="0.01" value="${m.period}"> cycles</label>`
-      : `<label class="grow">Points <input data-f="points" type="text" value="${String(m.points).replace(/"/g, '&quot;')}" placeholder="cycle value, cycle value, …"></label>
+         <label>Period <input data-f="period" type="number" step="any" min="0.01" value="${m.period}"> ${unit}</label>`
+      : `<label class="grow">Points <input data-f="points" type="text" value="${String(m.points).replace(/"/g, '&quot;')}" placeholder="${unit === 'minutes' ? 'minute' : 'cycle'} value, …"></label>
          <select data-f="curve">${opt('lin', m.curve, 'Linear')}${opt('exp', m.curve, 'Exponential')}</select>
          <label><input type="checkbox" data-f="loop"${m.loop ? ' checked' : ''}> Loop</label>`;
     const inactive = (k === 'fadeBeats' && !S.fadeOn) || (k === 'shiftBeats' && !S.shiftOn);
@@ -1455,7 +1548,8 @@ function renderMods() {
       <span class="mod-swatch" style="background:${MOD_COLORS[ci % MOD_COLORS.length]}"></span>
       <b class="mod-name">${MODS[k].label}${inactive ? ' <span class="muted small">(turned off)</span>' : ''}</b>
       <select data-f="mode">${opt('env', m.mode, 'Envelope')}${opt('lfo', m.mode, 'Wave')}</select>
-      ${MODS[k].global ? '<span class="small muted">shared clock (whole mix)</span>'
+      ${MODS[k].tempo ? `<select data-f="axis" title="Over cycles: points sit on sync points, and slow stretches take longer. Over clock time: points are in minutes, so a ramp is evenly paced.">${opt('cycles', m.axis || 'cycles', 'Laid out over cycles')}${opt('time', m.axis || 'cycles', 'Laid out over minutes')}</select>`
+        : MODS[k].global ? '<span class="small muted">shared clock (whole mix)</span>'
         : `<select data-f="clock" title="Shared: every part reads the same value at the same moment. Per part: each part reads the curve by its own beat count, so faster parts run ahead.">${opt('shared', m.clock || 'shared', 'Shared clock')}${opt('part', m.clock || 'shared', 'Each part’s own beats')}</select>`}
       ${body}
       <button type="button" class="toggle" data-f="remove">Remove</button>
@@ -1471,7 +1565,7 @@ function renderMods() {
 }
 function modsChanged(key) {
   compileMods();
-  if (MODS[key].structural) rebuildStructure();
+  if (MODS[key].structural || MODS[key].tempo) rebuildStructure();
   else { renderMods(); save(); }
   if (actx) applyLiveParams(nowU());
 }
@@ -1479,6 +1573,7 @@ function defaultMod(key) {
   const spec = MODS[key], cur = S[key];
   let from, to;
   if (spec.structural) { from = Math.max(spec.min, Math.round(cur / 4)); to = cur; }
+  else if (spec.tempo) { from = cur; to = Math.round(cur * 1.5); }
   else if (key === 'a4') { from = cur; to = cur - 8; }
   else { from = cur; to = clamp(cur * 2, spec.min, spec.max); if (Math.abs(to - cur) < 1e-6) to = +(cur / 2).toFixed(3); }
   return { mode: 'env', points: `0 ${from}, 6 ${to}`, curve: 'lin', loop: 0, shape: 'sine', lo: from, hi: to, period: 2, clock: 'shared' };
@@ -1494,6 +1589,7 @@ $('mod-rows').addEventListener('change', ev => {
   if (!el || !row) return;
   const key = row.dataset.key, f = el.dataset.f, m = S.mods[key];
   if (f === 'loop') m.loop = el.checked ? 1 : 0;
+  else if (f === 'axis') { m[f] = el.value; renderMods(); }
   else if (f === 'lo' || f === 'hi' || f === 'period') m[f] = NUM(el.value);
   else m[f] = el.value;
   modsChanged(key);
@@ -1530,7 +1626,7 @@ function syncModControls(u) {
       el.title = spread ? 'Current range across parts (each follows the curve by its own beats)'
                         : "Part 1's value; other parts are at their own points on the curve";
     } else {
-      el.value = show(f(u));
+      el.value = show(curveAt(key, u));
       el.title = 'Follows its curve in Changes over time';
     }
   }
@@ -1625,7 +1721,7 @@ function syncVisibility() {
 function writeControls() {
   for (const id of ['bpm', 'minutes', 'N', 'parts', 'pattern', 'mult', 'randRange', 'customText',
     'key', 'octave', 'scale', 'customScale', 'degStep', 'order', 'preset',
-    'decay', 'bright', 'mallet', 'reverb', 'spread', 'volume', 'viewSecs', 'flip', 'stopAtEnd', 'gridMax', 'lenMode', 'accent',
+    'decay', 'bright', 'mallet', 'reverb', 'spread', 'volume', 'viewSecs', 'stopAtEnd', 'gridMax', 'lenMode', 'accent',
     'fadeOn', 'fadeBeats', 'fadeShape', 'fadeStart', 'fadeDepth', 'tuning', 'a4',
     'shiftOn', 'shiftBeats', 'shiftSeq', 'shiftUnit', 'endMode', 'endCycles', 'pitchMode', 'interval', 'customNotes']) {
     $(id).value = S[id];
@@ -1690,7 +1786,6 @@ on('reverb', 'input', v => { S.reverb = NUM(v); if (wet) wet.gain.setTargetAtTim
 on('spread', 'input', v => { S.spread = NUM(v); updateMix(); save(); });
 on('volume', 'input', v => { S.volume = NUM(v); if (master) master.gain.setTargetAtTime(S.volume, actx.currentTime, 0.03); save(); });
 on('viewSecs', 'input', v => { S.viewSecs = NUM(v); save(); });
-on('flip', 'change', v => { S.flip = +v; save(); });
 on('lenMode', 'change', v => {
   S.lenMode = v;
   // keep the current tempo; reinterpret the length field
@@ -1736,7 +1831,7 @@ on('gridMax', 'change', v => { S.gridMax = +v; alignment = computeAlignment(); s
 on('stopAtEnd', 'change', v => {
   S.stopAtEnd = +v;
   // turning it on mid-play stops at the end of the current cycle
-  if (playing) stopCycle = (Math.floor(Math.max(0, elapsed()) / (T * spanCycles)) + 1) * spanCycles;
+  if (playing) stopCycle = (Math.floor(Math.max(0, uOf(elapsed())) / spanCycles) + 1) * spanCycles;
   save();
 });
 
@@ -1804,13 +1899,13 @@ function drawLanes(e) {
   Array.from({ length: n }, (_, i) => i)
     .sort((a, b) => notes[b] - notes[a] || b - a)
     .forEach((p, r) => { row[p] = r; });
-  const dir = S.flip ? -1 : 1;                // 1: hits travel left → right
+  // hits travel right → left: upcoming beats on the right, the "now" line near the left
   const plotW = W - labelW;
-  const nowX = labelW + plotW * (dir === 1 ? 0.8 : 0.2);
+  const nowX = labelW + plotW * 0.2;
   const pps = plotW / S.viewSecs;
-  const xOf = tb => nowX - dir * (tb - e) * pps;
-  const tA = e + (dir === 1 ? (nowX - labelW) : (W - nowX)) / pps;   // furthest future
-  const tB = e - (dir === 1 ? (W - nowX) : (nowX - labelW)) / pps;   // furthest past
+  const xOf = tb => nowX + (tb - e) * pps;
+  const tA = e + (W - nowX) / pps;        // furthest future
+  const tB = e - (nowX - labelW) / pps;   // furthest past
 
   // lanes background
   for (let i = 0; i < n; i++) {
@@ -1828,15 +1923,16 @@ function drawLanes(e) {
     const x = Math.round(xOf(s)) + 0.5;
     ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, H - bottom); ctx.stroke();
   }
+  const uB = uOf(tB), uA = uOf(tA);
   // sync points: full (rhythm too) and pulse-only
-  for (let c = Math.ceil(tB / T); c <= Math.floor(tA / T); c++) {
-    const x = xOf(c * T);
+  for (let c = Math.ceil(uB); c <= Math.floor(uA); c++) {
+    const x = xOf(timeOfU(c));
     const full = c % spanCycles === 0;
     ctx.strokeStyle = full ? 'rgba(242,180,90,0.55)' : 'rgba(242,180,90,0.25)'; ctx.lineWidth = full ? 2 : 1;
     ctx.beginPath(); ctx.moveTo(x, top - 4); ctx.lineTo(x, H - bottom); ctx.stroke();
     ctx.fillStyle = full ? 'rgba(242,180,90,0.9)' : 'rgba(242,180,90,0.55)';
-    ctx.font = '600 10px system-ui'; ctx.textAlign = dir === 1 ? 'right' : 'left';
-    ctx.fillText(full ? 'SYNC' : 'PULSE SYNC', x + (dir === 1 ? -5 : 5), 11);
+    ctx.font = '600 10px system-ui'; ctx.textAlign = 'left';
+    ctx.fillText(full ? 'SYNC' : 'PULSE SYNC', x + 5, 11);
   }
   const rhy = S.rhythm, RL = rhy.length;
 
@@ -1844,12 +1940,11 @@ function drawLanes(e) {
   const r = clamp(laneH * 0.32, 2.5, 9);
   for (let i = 0; i < n; i++) {
     const cy = top + (row[i] + 0.5) * laneH;
-    const dt = T / counts[i];
     const muted = !audible(i);
-    const k0 = Math.ceil(tB / dt), k1 = Math.floor(tA / dt);
+    const k0 = Math.ceil(uB * counts[i]), k1 = Math.floor(uA * counts[i]);
     const hue = partHue(i, n);
     for (let k = k0; k <= k1; k++) {
-      const tb = k * dt;
+      const tb = timeOfU(k / counts[i]);
       const age = e - tb;
       const x = xOf(tb);
       const hy = cy - clamp(shiftAt(i, k), -3, 3) * laneH * 0.12;   // transposed notes sit higher/lower
@@ -1888,17 +1983,16 @@ function drawLanes(e) {
   // now line
   ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(Math.round(nowX) + 0.5, top - 4); ctx.lineTo(Math.round(nowX) + 0.5, H - bottom); ctx.stroke();
-  ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.font = '10px system-ui'; ctx.textAlign = dir === 1 ? 'left' : 'right';
-  ctx.fillText('NOW', nowX + (dir === 1 ? 5 : -5), 11);
+  ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.font = '10px system-ui'; ctx.textAlign = 'right';
+  ctx.fillText('NOW', nowX - 5, 11);
 
   // labels with hit flash
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
   ctx.font = `${clamp(laneH * 0.45, 9, 13)}px ui-monospace, Menlo, monospace`;
   for (let i = 0; i < n; i++) {
     const cy = top + (row[i] + 0.5) * laneH;
-    const dt = T / counts[i];
-    const kNow = Math.floor(e / dt);
-    const age = e - kNow * dt;
+    const kNow = Math.floor(uOf(e) * counts[i]);
+    const age = e - timeOfU(kNow / counts[i]);
     const flash = playing && S.rhythm[localK(i, kNow) % S.rhythm.length] ? Math.max(0, 1 - age / 0.2) : 0;
     const muted = !audible(i);
     ctx.fillStyle = partColor(i, n, muted ? 0.3 : 0.55 + flash * 0.45, 62 + flash * 25);
@@ -1965,7 +2059,7 @@ function drawOverview(e) {
   // curves from Changes over time, each scaled to its own range
   Object.keys(S.mods).filter(isMod).forEach((key, ci) => {
     const N = Math.min(cols, 600), vals = [];
-    for (let j = 0; j <= N; j++) vals.push(val(key, j / N * spanCycles));
+    for (let j = 0; j <= N; j++) vals.push(curveAt(key, j / N * spanCycles));
     const lo = Math.min(...vals), hi = Math.max(...vals);
     ctx.strokeStyle = MOD_COLORS[ci % MOD_COLORS.length]; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.9;
     ctx.beginPath();
@@ -1976,7 +2070,7 @@ function drawOverview(e) {
     ctx.stroke(); ctx.globalAlpha = 1;
   });
   // pulse-sync markers, thinned so they stay at least ~8px apart
-  const P = T * spanCycles;
+  const P = procSecs();
   if (spanCycles > 1) {
     const stride = niceStep(8 / (W / spanCycles), [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000]);
     ctx.strokeStyle = stride === 1 ? 'rgba(242,180,90,0.35)' : 'rgba(242,180,90,0.22)'; ctx.lineWidth = 1;
@@ -1990,13 +2084,12 @@ function drawOverview(e) {
   ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.font = '10px system-ui'; ctx.textAlign = 'center';
   ctx.strokeStyle = 'rgba(255,255,255,0.12)';
   for (let s = tickStep; s < P - tickStep * 0.4; s += tickStep) {
-    const x = s / P * W;
+    const x = uOf(s) / spanCycles * W;   // the x axis is cycles; with a tempo curve ticks are uneven
     ctx.beginPath(); ctx.moveTo(x, 4); ctx.lineTo(x, plotH + 4); ctx.stroke();
     ctx.fillText(fmtTick(s, tickStep), x, H - 3);
   }
   // played region + playhead
-  const pos = mod(e, P);
-  const px = pos / P * W;
+  const px = mod(uOf(e), spanCycles) / spanCycles * W;
   ctx.fillStyle = 'rgba(255,255,255,0.06)';
   ctx.fillRect(0, 4, px, plotH);
   ctx.strokeStyle = '#f2b45a'; ctx.lineWidth = 2;
@@ -2013,7 +2106,7 @@ function drawDial(e) {
   ctx.beginPath(); ctx.moveTo(cx, cy - R - 4); ctx.lineTo(cx, cy - r0 + 4); ctx.strokeStyle = 'rgba(242,180,90,0.4)'; ctx.stroke();
   const pts = [];
   for (let i = 0; i < n; i++) {
-    const rel = mod(e * (counts[i] - counts[0]) / T, 1);
+    const rel = mod(uOf(e) * (counts[i] - counts[0]), 1);
     const a = -Math.PI / 2 + rel * Math.PI * 2;
     const rr = n < 2 ? R * 0.6 : r0 + (R - r0) * i / (n - 1);
     pts.push([cx + Math.cos(a) * rr, cy + Math.sin(a) * rr]);
@@ -2029,15 +2122,15 @@ function drawDial(e) {
 
 let lastReadout = '';
 function updateReadout(e) {
-  const P = T * spanCycles;
+  const P = procSecs(), u = uOf(e), uPos = mod(u, spanCycles);
   const pos = mod(e, P);
-  $('fs-prog').style.width = (pos / P * 100).toFixed(2) + '%';
+  $('fs-prog').style.width = (uPos / spanCycles * 100).toFixed(2) + '%';
   const multi = spanCycles > 1;
   const endLabel = S.stopAtEnd ? 'Ends in' : spanReason !== 'sync' ? 'Restarts in' : (multi ? 'Full sync in' : 'Next sync');
-  const cycle = multi ? `${Math.floor(pos / T) + 1} / ${spanCycles}` : String(Math.floor(Math.max(0, e) / T) + 1);
+  const cycle = multi ? `${Math.floor(uPos) + 1} / ${spanCycles}` : String(Math.floor(Math.max(0, u)) + 1);
   const vals = [
     `${fmtTime(pos)} / ${fmtTime(P)}`,
-    multi ? 'Next pulse sync' : endLabel, fmtTime(T - mod(e, T)),
+    multi ? 'Next pulse sync' : endLabel, fmtTime(timeOfU(Math.floor(u) + 1) - e),
     endLabel, fmtTime(P - pos), cycle, multi ? '1' : '',
   ];
   const key = vals.join('|');
@@ -2060,16 +2153,16 @@ function frame() {
   drawDial(e);
   updateReadout(e);
   const nowMs = performance.now();
-  if (nowMs - lastModSync > 100) { lastModSync = nowMs; syncModControls(mod(e / T, spanCycles)); }
+  if (nowMs - lastModSync > 100) { lastModSync = nowMs; syncModControls(mod(uOf(e), spanCycles)); }
   requestAnimationFrame(frame);
 }
 
 cvs.overview.addEventListener('click', ev => {
   const r = cvs.overview.getBoundingClientRect();
   const frac = clamp((ev.clientX - r.left) / r.width, 0, 1);
-  const P = T * spanCycles;
+  const P = procSecs();
   const rep = Math.floor(Math.max(0, elapsed()) / P);
-  seek(rep * P + frac * P);
+  seek(rep * P + timeOfU(frac * spanCycles));
 });
 
 // ---------- Setups UI ----------
