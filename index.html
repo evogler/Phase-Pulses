@@ -124,6 +124,15 @@
   .parts-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
   .parts-head h2 { margin: 0; }
 
+  #cf { display: block; width: 100%; height: 330px; }
+  .cf-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 6px; }
+  .cf-head h2 { margin: 0; }
+  .cf-head > .muted:last-child { flex-basis: 100%; }
+  .cf-ctl { display: inline-flex; gap: 14px; align-items: center; }
+  .cf-ctl label { display: inline-flex; gap: 6px; align-items: center; }
+  #cfMaxQ { width: 70px; }
+  #cfMaxQ:disabled { opacity: 0.4; }
+
   @media (max-width: 680px) {
     .viz-row { grid-template-columns: 1fr; }
     #dial { height: 200px; }
@@ -175,6 +184,18 @@
     <canvas id="dial"></canvas>
   </div>
 </div>
+
+<section class="card" style="margin-top:12px">
+  <div class="cf-head">
+    <h2>Phase as fractions</h2>
+    <span class="cf-ctl small muted">
+      <label>Max denominator <input id="cfMaxQ" type="number" min="1" step="1"></label>
+      <label><input id="cfAll" type="checkbox"> Show all</label>
+    </span>
+    <span class="small muted">φ = position between pulse syncs (part 2 leads part 1 by φ beats). Each row stops the continued fraction one term later: the parts sit on a 1/q-beat grid, off by the error shown.</span>
+  </div>
+  <canvas id="cf"></canvas>
+</section>
 
 <section class="card" style="margin-top:12px">
   <div class="setups-row">
@@ -467,6 +488,7 @@ const DEFAULTS = {
   mods: {}, endMode: 'auto', endCycles: 6,
   pitchMode: 'scale', interval: 7, customNotes: 'C3 E3 G3 B3 D4 F#4 A4 C5',
   overrides: {}, mute: {}, solo: {},
+  cfMaxQ: 32, cfAll: 0,
 };
 const STORE_KEY = 'phase-pulses-v1';
 // Build a full, valid settings object from anything (storage, a saved setup, a link).
@@ -1727,6 +1749,7 @@ function writeControls() {
     $(id).value = S[id];
   }
   if (S.pattern === 'custom') $('parts').value = computeOffsets().length;
+  $('cfMaxQ').value = S.cfMaxQ; $('cfAll').checked = !!S.cfAll; $('cfMaxQ').disabled = !!S.cfAll;
   fillDegrees();
   syncVisibility();
 }
@@ -1870,7 +1893,7 @@ document.addEventListener('keydown', ev => {
 
 // ---------- Visuals ----------
 const cvs = {
-  lanes: $('lanes'), overview: $('overview'), dial: $('dial'),
+  lanes: $('lanes'), overview: $('overview'), dial: $('dial'), cf: $('cf'),
 };
 const g2 = {};
 for (const k in cvs) g2[k] = cvs[k].getContext('2d');
@@ -2120,6 +2143,250 @@ function drawDial(e) {
   });
 }
 
+// ---------- Phase as continued-fraction convergents ----------
+// φ = fractional position between pulse syncs. Because every part's offset is a whole
+// number of beats, when φ ≈ p/q every part lands on a common 1/q-beat grid. The
+// convergents of φ's continued fraction are its best rational approximations, each
+// one closer than any fraction with a smaller denominator.
+const CF_ROWS = 8, CF_EAR_MS = 10;
+// a hit (φ passing exactly through p/q) stays lit for CF_HIT_K / q² seconds
+const CF_HIT_K = 40, CF_HIT_MAX = 6, CF_HIT_MIN = 0.15;
+let cfDecades = 6;          // depth of the zoom axis; eases toward what the current convergents need
+let cfPrev = new Map();     // 'p/q' → error last frame, to catch the moment it crosses zero
+const cfHits = new Map();   // 'p/q' → { t0, dur } of a running flash
+let cfLastU = null;
+function convergents(x) {
+  const out = [];
+  let h1 = 1, h2 = 0, k1 = 0, k2 = 1, r = x;
+  for (let j = 0; j < 40; j++) {
+    const a = Math.floor(r);
+    const h = a * h1 + h2, k = a * k1 + k2;
+    if (k > 1e12) break;
+    const err = h / k - x;
+    out.push({ p: h, q: k, err });
+    h2 = h1; h1 = h; k2 = k1; k1 = k;
+    const rem = r - a;
+    if (Math.abs(err) < 1e-13 || rem < 1e-12) break;
+    r = 1 / rem;
+  }
+  return out;
+}
+const SUP = { '-': '⁻', 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹' };
+const sup = n => String(n).split('').map(c => SUP[c] ?? c).join('');
+function fmtSci(v) {
+  if (v === 0) return '0';
+  const sign = v < 0 ? '−' : '+', a = Math.abs(v);
+  if (a >= 0.001) return sign + a.toFixed(Math.max(0, 3 - Math.floor(Math.log10(a)))).replace(/0+$/, '').replace(/\.$/, '');
+  const ex = Math.floor(Math.log10(a));
+  return `${sign}${(a / 10 ** ex).toFixed(1)}×10${sup(ex)}`;
+}
+function fmtDur(secs) {
+  const a = Math.abs(secs);
+  if (a === 0) return 'exact';
+  if (a >= 0.9995) return a.toFixed(2) + ' s';
+  const r = (v, d) => String(Number(v.toPrecision(d)));
+  if (a >= 1e-3) return r(a * 1e3, a >= 0.1 ? 3 : 2) + ' ms';
+  if (a >= 1e-6) return r(a * 1e6, 2) + ' µs';
+  return a < 1e-9 ? '< 1 ns' : r(a * 1e9, 2) + ' ns';
+}
+// seconds per beat of a part with n beats per cycle, at the current point (follows tempo curves)
+function beatSecsAt(u) {
+  const d = 1e-4, b = (timeOfU(u + d) - timeOfU(u)) / d / S.N;
+  return Number.isFinite(b) && b > 0 ? b : T / S.N;
+}
+// How deep φ sits in p/q's basin: |err|·q² is 1 at the edge of every convergent's basin
+// and shrinks toward 0 at the centre. 0 at the edge, 1 at 1/50 of the way, up to 1.5 deeper in.
+function nearness(c) {
+  const b = Math.abs(c.err) * c.q * c.q;
+  if (b === 0) return 1.5;
+  return clamp(-Math.log10(b) / Math.log10(50), 0, 1.5);
+}
+function drawFractions(e) {
+  const { w: W, h: H, ctx } = fitCanvas(cvs.cf);
+  ctx.clearRect(0, 0, W, H);
+  const u = uOf(e), phi = mod(u, 1);
+  const all = convergents(phi);
+  const cv = (S.cfAll ? all : all.filter(c => c.q <= S.cfMaxQ)).slice(0, CF_ROWS);
+  const hidden = all.length - cv.length;
+  const beat = beatSecsAt(Math.max(0, u));
+  const nowS = performance.now() / 1000;
+
+  // hits: an error that changes sign between frames means φ just passed exactly through p/q.
+  // Only small forward steps count, so seeking or wrapping round doesn't fire them.
+  const du = cfLastU == null ? Infinity : u - cfLastU;
+  const stepOK = du > 0 && du < 0.05;
+  const next = new Map();
+  for (const c of all) {
+    const key = c.p + '/' + c.q, prev = cfPrev.get(key);
+    next.set(key, c.err);
+    if (stepOK && prev !== undefined && (prev === 0 || c.err === 0 || Math.sign(prev) !== Math.sign(c.err)))
+      cfHits.set(key, { t0: nowS, dur: clamp(CF_HIT_K / (c.q * c.q), CF_HIT_MIN, CF_HIT_MAX) });
+  }
+  cfPrev = next; cfLastU = u;
+  for (const [k, h] of cfHits) if (nowS - h.t0 > h.dur) cfHits.delete(k);
+  const hitLevel = c => {
+    const h = cfHits.get(c.p + '/' + c.q);
+    return h ? Math.pow(1 - (nowS - h.t0) / h.dur, 1.5) : 0;
+  };
+
+  const minErr = Math.min(...cv.map(c => Math.abs(c.err)).filter(v => v >= 1e-13));
+  if (Number.isFinite(minErr)) {
+    const want = clamp(Math.ceil(-Math.log10(minErr)) + 1, 3, 13);
+    cfDecades += (want - cfDecades) * 0.08;
+  }
+  const CF_DECADES = cfDecades;
+  const narrow = W < 520;
+  const colA = narrow ? 76 : 104, colC = narrow ? 92 : 190;
+  const x0 = colA + 8, x1 = W - colC - 8, cx = (x0 + x1) / 2, half = (x1 - x0) / 2;
+  const headH = 80, rowH = (H - headH - 18) / CF_ROWS;
+  const WARM = '242,180,90', COOL = '111,195,223';
+  const xOfErr = d => {
+    if (d === 0) return cx;
+    const L = clamp(-Math.log10(Math.abs(d)), 0, CF_DECADES) / CF_DECADES;
+    return cx + Math.sign(d) * (1 - L) * half;
+  };
+  // the dominant grid: the convergent φ sits deepest inside the basin of (smallest |err|·q²),
+  // so near 0.4001 it's 2/5 even though 1/2 and 13/32 are also nearby. Ties go to the simpler one.
+  let dom = -1, domAmt = 0;
+  cv.forEach((c, i) => { const n = nearness(c); if (n > domAmt + 1e-9) { dom = i; domAmt = n; } });
+  const emph = i => (i === dom ? domAmt : 0);
+
+  // ---- header: φ, the dominant fraction, and a 0..1 number line with the convergents as ticks
+  ctx.textBaseline = 'alphabetic';
+  ctx.font = '600 15px ui-monospace, Menlo, monospace'; ctx.textAlign = 'left';
+  ctx.fillStyle = `rgb(${WARM})`;
+  const phiTxt = 'φ = ' + phi.toFixed(narrow ? 9 : 12);
+  ctx.fillText(phiTxt, 0, 16);
+  if (dom >= 0) {
+    const c = cv[dom], a = clamp(domAmt / 1.5, 0, 1), hl = hitLevel(c);
+    const fs = 13 + 9 * a;
+    ctx.font = `700 ${fs}px ui-monospace, Menlo, monospace`;
+    ctx.fillStyle = `rgba(255,${Math.round(214 + 41 * hl)},${Math.round(150 + 105 * hl)},${0.35 + 0.65 * Math.max(a, hl)})`;
+    ctx.fillText(`≈ ${c.p}/${c.q}`, measureAt(ctx, phiTxt) + 14, 17);
+  }
+  ctx.font = '11px system-ui'; ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.textAlign = 'right';
+  ctx.fillText(`1 beat = ${fmtDur(beat)}`, W, 15);
+  const lx0 = 8, lx1 = W - 8, ly = 60, lxOf = v => lx0 + v * (lx1 - lx0);
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(lx0, ly + 0.5); ctx.lineTo(lx1, ly + 0.5); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.font = '10px system-ui';
+  ctx.textAlign = 'left'; ctx.fillText('0', lx0, ly + 13);
+  ctx.textAlign = 'right'; ctx.fillText('1', lx1, ly + 13);
+  cv.forEach((c, i) => {
+    const x = Math.round(lxOf(c.p / c.q)) + 0.5, len = Math.max(3, 18 - i * 2.2);
+    const em = Math.max(emph(i) / 1.5, hitLevel(c));
+    ctx.strokeStyle = `rgba(${c.err >= 0 ? WARM : COOL},${Math.min(1, 0.9 - i * 0.08 + em)})`;
+    ctx.lineWidth = 1 + em * 3;
+    ctx.beginPath(); ctx.moveTo(x, ly - len - em * 8); ctx.lineTo(x, ly); ctx.stroke();
+    if (i < 4 || em > 0.3) {
+      ctx.fillStyle = `rgba(255,255,255,${0.55 + 0.45 * em})`; ctx.textAlign = 'center';
+      ctx.font = `${em > 0.3 ? 700 : 400} ${10 + em * 3}px system-ui`;
+      ctx.fillText(`${c.p}/${c.q}`, x, ly - len - em * 8 - 3);
+    }
+  });
+  ctx.fillStyle = '#fff';
+  const px = lxOf(phi);
+  ctx.beginPath(); ctx.moveTo(px, ly + 2); ctx.lineTo(px - 5, ly + 10); ctx.lineTo(px + 5, ly + 10); ctx.closePath(); ctx.fill();
+
+  // ---- zoom axis: decade gridlines, the "too small to hear" band, labels
+  const top = headH, bot = headH + rowH * CF_ROWS;
+  const earD = CF_EAR_MS / 1000 / beat;   // ear tolerance in beats
+  const ew = Math.abs(xOfErr(Math.min(1, earD)) - cx);
+  ctx.fillStyle = 'rgba(255,255,255,0.045)'; ctx.fillRect(cx - ew, top, ew * 2, bot - top);
+  ctx.font = '10px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  const stride = Math.max(1, Math.ceil(CF_DECADES / (narrow ? 2 : 4)));
+  ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+  ctx.beginPath(); ctx.moveTo(Math.round(cx) + 0.5, top); ctx.lineTo(Math.round(cx) + 0.5, bot); ctx.stroke();
+  for (let dec = 0; dec < CF_DECADES - 0.35; dec += 1) {
+    const L = dec / CF_DECADES, labeled = dec % stride === 0;
+    for (const sgn of [-1, 1]) {
+      const x = Math.round(cx + sgn * (1 - L) * half) + 0.5;
+      ctx.strokeStyle = `rgba(255,255,255,${labeled ? 0.1 : 0.04})`;
+      ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bot); ctx.stroke();
+      if (labeled) {
+        ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        ctx.fillText(dec === 0 ? '1' : '10' + sup(-dec), x, H - 4);
+      }
+    }
+  }
+  ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.fillText('φ', cx, H - 4);
+  if (!narrow) {
+    ctx.textAlign = 'left'; ctx.fillStyle = `rgba(${COOL},0.7)`; ctx.fillText('◀ below φ', x0, top - 4);
+    ctx.textAlign = 'right'; ctx.fillStyle = `rgba(${WARM},0.7)`; ctx.fillText('above φ ▶', x1, top - 4);
+    if (ew > 30) { ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillText(`< ${CF_EAR_MS} ms`, cx, top - 4); }
+  }
+
+  // ---- rows: zigzag of convergents closing in on φ
+  const pts = cv.map((c, i) => [xOfErr(c.err), top + (i + 0.5) * rowH]);
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1.2;
+  ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.stroke();
+  cv.forEach((c, i) => {
+    const [x, y] = pts[i], col = c.err >= 0 ? WARM : COOL;
+    const em = emph(i), a = clamp(em / 1.5, 0, 1), hl = hitLevel(c);
+    const exact = Math.abs(c.err) < 1e-13;
+    // row band: swells with closeness, flashes on a hit
+    if (a > 0 || hl > 0) {
+      ctx.fillStyle = `rgba(${WARM},${0.05 + 0.2 * a})`; ctx.fillRect(0, y - rowH / 2, W, rowH);
+      if (hl > 0) { ctx.fillStyle = `rgba(255,240,210,${0.55 * hl})`; ctx.fillRect(0, y - rowH / 2, W, rowH); }
+    }
+    // stem from φ out to the convergent: its length is how far off it is
+    ctx.strokeStyle = `rgba(${col},${0.35 + 0.5 * a})`; ctx.lineWidth = 3 + 4 * a;
+    ctx.beginPath(); ctx.moveTo(cx, y); ctx.lineTo(x, y); ctx.stroke();
+    // glow + dot
+    const rad = 4 + 7 * a + 4 * hl;
+    if (a > 0 || hl > 0) {
+      const g = ctx.createRadialGradient(x, y, 0, x, y, rad * 3.2);
+      g.addColorStop(0, `rgba(${col},${0.5 * Math.max(a, hl)})`); g.addColorStop(1, `rgba(${col},0)`);
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, rad * 3.2, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = exact || hl > 0.5 ? '#fff' : `rgb(${col})`;
+    ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill();
+    // a hit sends a ring out from the exact centre
+    if (hl > 0) {
+      const h = cfHits.get(c.p + '/' + c.q), prog = (nowS - h.t0) / h.dur;
+      ctx.strokeStyle = `rgba(255,255,255,${hl})`; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(cx, y, 4 + prog * Math.min(half, rowH * 3), 0, Math.PI * 2); ctx.stroke();
+    }
+    // stacked fraction p over q
+    const fcx = colA / 2, wt = a > 0.3 || hl > 0.3 ? 700 : 500;
+    let fs = Math.min(14, rowH * 0.42) * (1 + 0.3 * Math.max(a, hl));
+    ctx.font = `${wt} ${fs}px ui-monospace, Menlo, monospace`;
+    const wMax = Math.max(ctx.measureText(String(c.p)).width, ctx.measureText(String(c.q)).width);
+    if (wMax > colA - 6) { fs *= (colA - 6) / wMax; ctx.font = `${wt} ${fs}px ui-monospace, Menlo, monospace`; }
+    const bw = Math.min(colA - 6, Math.max(ctx.measureText(String(c.p)).width, ctx.measureText(String(c.q)).width) + 6);
+    ctx.fillStyle = hl > 0.3 ? '#fff' : a > 0 ? `rgba(${WARM},${0.6 + 0.4 * a})` : 'rgba(230,232,235,0.92)';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+    ctx.fillText(String(c.p), fcx, y - 2.5);
+    ctx.textBaseline = 'top';
+    ctx.fillText(String(c.q), fcx, y + 2.5);
+    ctx.fillRect(fcx - bw / 2, y - 0.5, bw, 1 + a);
+    // error: in clock time and in beats
+    ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+    const tx = x1 + 14;
+    ctx.font = `${a > 0.3 ? 700 : 600} ${12 + 2 * a}px ui-monospace, Menlo, monospace`;
+    ctx.fillStyle = exact || hl > 0.3 ? '#fff' : `rgb(${col})`;
+    ctx.fillText(exact ? 'exact' : fmtDur(c.err * beat), tx, narrow ? y : y - 7);
+    if (!narrow) {
+      ctx.font = '11px ui-monospace, Menlo, monospace'; ctx.fillStyle = 'rgba(255,255,255,0.45)';
+      ctx.fillText(exact ? `on a 1/${c.q}-beat grid` : `${fmtSci(c.err)} beat · 1/${c.q} grid`, tx, y + 8);
+    }
+  });
+  if (cv.length < CF_ROWS) {
+    const y = top + (cv.length + 0.5) * rowH;
+    ctx.font = '11px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    const last = cv[cv.length - 1];
+    const msg = last && Math.abs(last.err) < 1e-13 ? 'exact (to the clock’s precision)'
+      : hidden > 0 ? `${hidden} more with denominators above ${S.cfMaxQ}` : '';
+    ctx.fillText(msg, cx, y);
+  }
+  ctx.textBaseline = 'alphabetic';
+}
+function measureAt(ctx, text) {
+  ctx.save(); ctx.font = '600 15px ui-monospace, Menlo, monospace';
+  const w = ctx.measureText(text).width; ctx.restore(); return w;
+}
+
 let lastReadout = '';
 function updateReadout(e) {
   const P = procSecs(), u = uOf(e), uPos = mod(u, spanCycles);
@@ -2151,6 +2418,7 @@ function frame() {
   drawLanes(e);
   drawOverview(e);
   drawDial(e);
+  drawFractions(e);
   updateReadout(e);
   const nowMs = performance.now();
   if (nowMs - lastModSync > 100) { lastModSync = nowMs; syncModControls(mod(uOf(e), spanCycles)); }
@@ -2225,6 +2493,11 @@ $('setup-share').onclick = async () => {
   try { await navigator.clipboard.writeText(link); setupMsg('Link copied. Anyone opening it gets exactly these settings.'); }
   catch (e) { setupMsg('Copy the link above. Anyone opening it gets exactly these settings.'); }
 };
+
+$('cfMaxQ').addEventListener('change', () => {
+  S.cfMaxQ = Math.max(1, Math.round(+$('cfMaxQ').value) || 32); $('cfMaxQ').value = S.cfMaxQ; save();
+});
+$('cfAll').addEventListener('change', () => { S.cfAll = $('cfAll').checked ? 1 : 0; $('cfMaxQ').disabled = !!S.cfAll; save(); });
 
 // ---------- Boot ----------
 fillSelects();
