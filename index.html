@@ -127,6 +127,11 @@
   #cf { display: block; width: 100%; height: 330px; }
   .cf-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 6px; }
   .cf-head h2 { margin: 0; }
+  .cf-head > .muted:last-child { flex-basis: 100%; }
+  .cf-ctl { display: inline-flex; gap: 14px; align-items: center; }
+  .cf-ctl label { display: inline-flex; gap: 6px; align-items: center; }
+  #cfMaxQ { width: 70px; }
+  #cfMaxQ:disabled { opacity: 0.4; }
 
   @media (max-width: 680px) {
     .viz-row { grid-template-columns: 1fr; }
@@ -183,6 +188,10 @@
 <section class="card" style="margin-top:12px">
   <div class="cf-head">
     <h2>Phase as fractions</h2>
+    <span class="cf-ctl small muted">
+      <label>Max denominator <input id="cfMaxQ" type="number" min="1" step="1"></label>
+      <label><input id="cfAll" type="checkbox"> Show all</label>
+    </span>
     <span class="small muted">φ = position between pulse syncs (part 2 leads part 1 by φ beats). Each row stops the continued fraction one term later: the parts sit on a 1/q-beat grid, off by the error shown.</span>
   </div>
   <canvas id="cf"></canvas>
@@ -479,6 +488,7 @@ const DEFAULTS = {
   mods: {}, endMode: 'auto', endCycles: 6,
   pitchMode: 'scale', interval: 7, customNotes: 'C3 E3 G3 B3 D4 F#4 A4 C5',
   overrides: {}, mute: {}, solo: {},
+  cfMaxQ: 32, cfAll: 0,
 };
 const STORE_KEY = 'phase-pulses-v1';
 // Build a full, valid settings object from anything (storage, a saved setup, a link).
@@ -1739,6 +1749,7 @@ function writeControls() {
     $(id).value = S[id];
   }
   if (S.pattern === 'custom') $('parts').value = computeOffsets().length;
+  $('cfMaxQ').value = S.cfMaxQ; $('cfAll').checked = !!S.cfAll; $('cfMaxQ').disabled = !!S.cfAll;
   fillDegrees();
   syncVisibility();
 }
@@ -2138,11 +2149,16 @@ function drawDial(e) {
 // convergents of φ's continued fraction are its best rational approximations, each
 // one closer than any fraction with a smaller denominator.
 const CF_ROWS = 8, CF_EAR_MS = 10;
-let cfDecades = 6;   // depth of the zoom axis; eases toward what the current convergents need
+// a hit (φ passing exactly through p/q) stays lit for CF_HIT_K / q² seconds
+const CF_HIT_K = 40, CF_HIT_MAX = 6, CF_HIT_MIN = 0.15;
+let cfDecades = 6;          // depth of the zoom axis; eases toward what the current convergents need
+let cfPrev = new Map();     // 'p/q' → error last frame, to catch the moment it crosses zero
+const cfHits = new Map();   // 'p/q' → { t0, dur } of a running flash
+let cfLastU = null;
 function convergents(x) {
   const out = [];
   let h1 = 1, h2 = 0, k1 = 0, k2 = 1, r = x;
-  for (let j = 0; j < 40 && out.length < CF_ROWS; j++) {
+  for (let j = 0; j < 40; j++) {
     const a = Math.floor(r);
     const h = a * h1 + h2, k = a * k1 + k2;
     if (k > 1e12) break;
@@ -2167,7 +2183,7 @@ function fmtSci(v) {
 function fmtDur(secs) {
   const a = Math.abs(secs);
   if (a === 0) return 'exact';
-  if (a >= 1) return a.toFixed(2) + ' s';
+  if (a >= 0.9995) return a.toFixed(2) + ' s';
   const r = (v, d) => String(Number(v.toPrecision(d)));
   if (a >= 1e-3) return r(a * 1e3, a >= 0.1 ? 3 : 2) + ' ms';
   if (a >= 1e-6) return r(a * 1e6, 2) + ' µs';
@@ -2178,36 +2194,76 @@ function beatSecsAt(u) {
   const d = 1e-4, b = (timeOfU(u + d) - timeOfU(u)) / d / S.N;
   return Number.isFinite(b) && b > 0 ? b : T / S.N;
 }
+// How deep φ sits in p/q's basin: |err|·q² is 1 at the edge of every convergent's basin
+// and shrinks toward 0 at the centre. 0 at the edge, 1 at 1/50 of the way, up to 1.5 deeper in.
+function nearness(c) {
+  const b = Math.abs(c.err) * c.q * c.q;
+  if (b === 0) return 1.5;
+  return clamp(-Math.log10(b) / Math.log10(50), 0, 1.5);
+}
 function drawFractions(e) {
   const { w: W, h: H, ctx } = fitCanvas(cvs.cf);
   ctx.clearRect(0, 0, W, H);
   const u = uOf(e), phi = mod(u, 1);
-  const cv = convergents(phi);
+  const all = convergents(phi);
+  const cv = (S.cfAll ? all : all.filter(c => c.q <= S.cfMaxQ)).slice(0, CF_ROWS);
+  const hidden = all.length - cv.length;
   const beat = beatSecsAt(Math.max(0, u));
-  const narrow = W < 520;
-  const colA = narrow ? 76 : 104, colC = narrow ? 92 : 190;
-  const x0 = colA + 8, x1 = W - colC - 8, cx = (x0 + x1) / 2, half = (x1 - x0) / 2;
+  const nowS = performance.now() / 1000;
+
+  // hits: an error that changes sign between frames means φ just passed exactly through p/q.
+  // Only small forward steps count, so seeking or wrapping round doesn't fire them.
+  const du = cfLastU == null ? Infinity : u - cfLastU;
+  const stepOK = du > 0 && du < 0.05;
+  const next = new Map();
+  for (const c of all) {
+    const key = c.p + '/' + c.q, prev = cfPrev.get(key);
+    next.set(key, c.err);
+    if (stepOK && prev !== undefined && (prev === 0 || c.err === 0 || Math.sign(prev) !== Math.sign(c.err)))
+      cfHits.set(key, { t0: nowS, dur: clamp(CF_HIT_K / (c.q * c.q), CF_HIT_MIN, CF_HIT_MAX) });
+  }
+  cfPrev = next; cfLastU = u;
+  for (const [k, h] of cfHits) if (nowS - h.t0 > h.dur) cfHits.delete(k);
+  const hitLevel = c => {
+    const h = cfHits.get(c.p + '/' + c.q);
+    return h ? Math.pow(1 - (nowS - h.t0) / h.dur, 1.5) : 0;
+  };
+
   const minErr = Math.min(...cv.map(c => Math.abs(c.err)).filter(v => v >= 1e-13));
   if (Number.isFinite(minErr)) {
     const want = clamp(Math.ceil(-Math.log10(minErr)) + 1, 3, 13);
     cfDecades += (want - cfDecades) * 0.08;
   }
   const CF_DECADES = cfDecades;
+  const narrow = W < 520;
+  const colA = narrow ? 76 : 104, colC = narrow ? 92 : 190;
+  const x0 = colA + 8, x1 = W - colC - 8, cx = (x0 + x1) / 2, half = (x1 - x0) / 2;
   const headH = 80, rowH = (H - headH - 18) / CF_ROWS;
   const WARM = '242,180,90', COOL = '111,195,223';
-  // symmetric log axis around φ: the edges are an error of 1 beat, the centre is exact
   const xOfErr = d => {
     if (d === 0) return cx;
     const L = clamp(-Math.log10(Math.abs(d)), 0, CF_DECADES) / CF_DECADES;
     return cx + Math.sign(d) * (1 - L) * half;
   };
-  const earIdx = cv.findIndex(c => Math.abs(c.err) * beat * 1000 < CF_EAR_MS);
+  // the dominant grid: the convergent φ sits deepest inside the basin of (smallest |err|·q²),
+  // so near 0.4001 it's 2/5 even though 1/2 and 13/32 are also nearby. Ties go to the simpler one.
+  let dom = -1, domAmt = 0;
+  cv.forEach((c, i) => { const n = nearness(c); if (n > domAmt + 1e-9) { dom = i; domAmt = n; } });
+  const emph = i => (i === dom ? domAmt : 0);
 
-  // ---- header: φ on a 0..1 number line, convergents as ticks (taller = smaller q)
+  // ---- header: φ, the dominant fraction, and a 0..1 number line with the convergents as ticks
   ctx.textBaseline = 'alphabetic';
   ctx.font = '600 15px ui-monospace, Menlo, monospace'; ctx.textAlign = 'left';
   ctx.fillStyle = `rgb(${WARM})`;
-  ctx.fillText('φ = ' + phi.toFixed(narrow ? 9 : 12), 0, 16);
+  const phiTxt = 'φ = ' + phi.toFixed(narrow ? 9 : 12);
+  ctx.fillText(phiTxt, 0, 16);
+  if (dom >= 0) {
+    const c = cv[dom], a = clamp(domAmt / 1.5, 0, 1), hl = hitLevel(c);
+    const fs = 13 + 9 * a;
+    ctx.font = `700 ${fs}px ui-monospace, Menlo, monospace`;
+    ctx.fillStyle = `rgba(255,${Math.round(214 + 41 * hl)},${Math.round(150 + 105 * hl)},${0.35 + 0.65 * Math.max(a, hl)})`;
+    ctx.fillText(`≈ ${c.p}/${c.q}`, measureAt(ctx, phiTxt) + 14, 17);
+  }
   ctx.font = '11px system-ui'; ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.textAlign = 'right';
   ctx.fillText(`1 beat = ${fmtDur(beat)}`, W, 15);
   const lx0 = 8, lx1 = W - 8, ly = 60, lxOf = v => lx0 + v * (lx1 - lx0);
@@ -2218,10 +2274,15 @@ function drawFractions(e) {
   ctx.textAlign = 'right'; ctx.fillText('1', lx1, ly + 13);
   cv.forEach((c, i) => {
     const x = Math.round(lxOf(c.p / c.q)) + 0.5, len = Math.max(3, 18 - i * 2.2);
-    ctx.strokeStyle = `rgba(${c.err >= 0 ? WARM : COOL},${0.9 - i * 0.08})`;
-    ctx.lineWidth = i === earIdx ? 2 : 1;
-    ctx.beginPath(); ctx.moveTo(x, ly - len); ctx.lineTo(x, ly); ctx.stroke();
-    if (i < 4) { ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.textAlign = 'center'; ctx.fillText(`${c.p}/${c.q}`, x, ly - len - 3); }
+    const em = Math.max(emph(i) / 1.5, hitLevel(c));
+    ctx.strokeStyle = `rgba(${c.err >= 0 ? WARM : COOL},${Math.min(1, 0.9 - i * 0.08 + em)})`;
+    ctx.lineWidth = 1 + em * 3;
+    ctx.beginPath(); ctx.moveTo(x, ly - len - em * 8); ctx.lineTo(x, ly); ctx.stroke();
+    if (i < 4 || em > 0.3) {
+      ctx.fillStyle = `rgba(255,255,255,${0.55 + 0.45 * em})`; ctx.textAlign = 'center';
+      ctx.font = `${em > 0.3 ? 700 : 400} ${10 + em * 3}px system-ui`;
+      ctx.fillText(`${c.p}/${c.q}`, x, ly - len - em * 8 - 3);
+    }
   });
   ctx.fillStyle = '#fff';
   const px = lxOf(phi);
@@ -2260,32 +2321,50 @@ function drawFractions(e) {
   ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1.2;
   ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.stroke();
   cv.forEach((c, i) => {
-    const [x, y] = pts[i], col = c.err >= 0 ? WARM : COOL, isEar = i === earIdx;
+    const [x, y] = pts[i], col = c.err >= 0 ? WARM : COOL;
+    const em = emph(i), a = clamp(em / 1.5, 0, 1), hl = hitLevel(c);
     const exact = Math.abs(c.err) < 1e-13;
-    if (isEar) { ctx.fillStyle = 'rgba(242,180,90,0.08)'; ctx.fillRect(0, y - rowH / 2, W, rowH); }
+    // row band: swells with closeness, flashes on a hit
+    if (a > 0 || hl > 0) {
+      ctx.fillStyle = `rgba(${WARM},${0.05 + 0.2 * a})`; ctx.fillRect(0, y - rowH / 2, W, rowH);
+      if (hl > 0) { ctx.fillStyle = `rgba(255,240,210,${0.55 * hl})`; ctx.fillRect(0, y - rowH / 2, W, rowH); }
+    }
     // stem from φ out to the convergent: its length is how far off it is
-    ctx.strokeStyle = `rgba(${col},0.35)`; ctx.lineWidth = 3;
+    ctx.strokeStyle = `rgba(${col},${0.35 + 0.5 * a})`; ctx.lineWidth = 3 + 4 * a;
     ctx.beginPath(); ctx.moveTo(cx, y); ctx.lineTo(x, y); ctx.stroke();
-    ctx.fillStyle = exact ? '#fff' : `rgb(${col})`;
-    ctx.beginPath(); ctx.arc(x, y, isEar ? 5.5 : 4, 0, Math.PI * 2); ctx.fill();
+    // glow + dot
+    const rad = 4 + 7 * a + 4 * hl;
+    if (a > 0 || hl > 0) {
+      const g = ctx.createRadialGradient(x, y, 0, x, y, rad * 3.2);
+      g.addColorStop(0, `rgba(${col},${0.5 * Math.max(a, hl)})`); g.addColorStop(1, `rgba(${col},0)`);
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, rad * 3.2, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = exact || hl > 0.5 ? '#fff' : `rgb(${col})`;
+    ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill();
+    // a hit sends a ring out from the exact centre
+    if (hl > 0) {
+      const h = cfHits.get(c.p + '/' + c.q), prog = (nowS - h.t0) / h.dur;
+      ctx.strokeStyle = `rgba(255,255,255,${hl})`; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(cx, y, 4 + prog * Math.min(half, rowH * 3), 0, Math.PI * 2); ctx.stroke();
+    }
     // stacked fraction p over q
-    const fcx = colA / 2;
-    let fs = Math.min(14, rowH * 0.42);
-    ctx.font = `${isEar ? 700 : 500} ${fs}px ui-monospace, Menlo, monospace`;
+    const fcx = colA / 2, wt = a > 0.3 || hl > 0.3 ? 700 : 500;
+    let fs = Math.min(14, rowH * 0.42) * (1 + 0.3 * Math.max(a, hl));
+    ctx.font = `${wt} ${fs}px ui-monospace, Menlo, monospace`;
     const wMax = Math.max(ctx.measureText(String(c.p)).width, ctx.measureText(String(c.q)).width);
-    if (wMax > colA - 6) { fs *= (colA - 6) / wMax; ctx.font = `${isEar ? 700 : 500} ${fs}px ui-monospace, Menlo, monospace`; }
+    if (wMax > colA - 6) { fs *= (colA - 6) / wMax; ctx.font = `${wt} ${fs}px ui-monospace, Menlo, monospace`; }
     const bw = Math.min(colA - 6, Math.max(ctx.measureText(String(c.p)).width, ctx.measureText(String(c.q)).width) + 6);
-    ctx.fillStyle = isEar ? `rgb(${WARM})` : 'rgba(230,232,235,0.92)';
+    ctx.fillStyle = hl > 0.3 ? '#fff' : a > 0 ? `rgba(${WARM},${0.6 + 0.4 * a})` : 'rgba(230,232,235,0.92)';
     ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
     ctx.fillText(String(c.p), fcx, y - 2.5);
     ctx.textBaseline = 'top';
     ctx.fillText(String(c.q), fcx, y + 2.5);
-    ctx.fillRect(fcx - bw / 2, y - 0.5, bw, 1);
-    // error: in beats and in clock time
+    ctx.fillRect(fcx - bw / 2, y - 0.5, bw, 1 + a);
+    // error: in clock time and in beats
     ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
     const tx = x1 + 14;
-    ctx.font = '600 12px ui-monospace, Menlo, monospace';
-    ctx.fillStyle = exact ? '#fff' : `rgb(${col})`;
+    ctx.font = `${a > 0.3 ? 700 : 600} ${12 + 2 * a}px ui-monospace, Menlo, monospace`;
+    ctx.fillStyle = exact || hl > 0.3 ? '#fff' : `rgb(${col})`;
     ctx.fillText(exact ? 'exact' : fmtDur(c.err * beat), tx, narrow ? y : y - 7);
     if (!narrow) {
       ctx.font = '11px ui-monospace, Menlo, monospace'; ctx.fillStyle = 'rgba(255,255,255,0.45)';
@@ -2296,9 +2375,16 @@ function drawFractions(e) {
     const y = top + (cv.length + 0.5) * rowH;
     ctx.font = '11px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillStyle = 'rgba(255,255,255,0.35)';
-    ctx.fillText(Math.abs(cv[cv.length - 1].err) < 1e-13 ? 'exact (to the clock’s precision)' : '', cx, y);
+    const last = cv[cv.length - 1];
+    const msg = last && Math.abs(last.err) < 1e-13 ? 'exact (to the clock’s precision)'
+      : hidden > 0 ? `${hidden} more with denominators above ${S.cfMaxQ}` : '';
+    ctx.fillText(msg, cx, y);
   }
   ctx.textBaseline = 'alphabetic';
+}
+function measureAt(ctx, text) {
+  ctx.save(); ctx.font = '600 15px ui-monospace, Menlo, monospace';
+  const w = ctx.measureText(text).width; ctx.restore(); return w;
 }
 
 let lastReadout = '';
@@ -2407,6 +2493,11 @@ $('setup-share').onclick = async () => {
   try { await navigator.clipboard.writeText(link); setupMsg('Link copied. Anyone opening it gets exactly these settings.'); }
   catch (e) { setupMsg('Copy the link above. Anyone opening it gets exactly these settings.'); }
 };
+
+$('cfMaxQ').addEventListener('change', () => {
+  S.cfMaxQ = Math.max(1, Math.round(+$('cfMaxQ').value) || 32); $('cfMaxQ').value = S.cfMaxQ; save();
+});
+$('cfAll').addEventListener('change', () => { S.cfAll = $('cfAll').checked ? 1 : 0; $('cfMaxQ').disabled = !!S.cfAll; save(); });
 
 // ---------- Boot ----------
 fillSelects();
